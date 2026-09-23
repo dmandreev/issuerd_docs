@@ -1,0 +1,87 @@
+---
+title: issuerd
+description: Keycloak-compatible Identity & Access Management in Rust — OIDC conformance-tested, single binary, horizontally scalable. Free and open source under the Apache-2.0 license.
+template: splash
+hero:
+  tagline: Keycloak-compatible Identity &amp; Access Management in Rust — conformance-tested OIDC/OAuth2, shipped as a single binary, horizontally scalable.
+  image:
+    light: ../../assets/logo-small.svg
+    dark: ../../assets/logo-small-white.svg
+    alt: issuerd "d" keyhole mark
+  actions:
+    - text: Get started
+      link: /getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: Documentation
+      link: /docs-overview/
+      icon: open-book
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/issuerd/issuerd
+      icon: github
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Why issuerd
+
+<CardGrid stagger>
+  <Card title="Conformance-tested OIDC/OAuth2" icon="approve-check-circle">
+    Verified with the official OpenID Foundation conformance suite (release v5.2.4):
+    the Config OP, Basic OP, and Form Post OP plans pass with 0 failures and 0
+    warnings. Advanced OAuth 2.1 capabilities included: PAR, JAR/JARM, RAR, DPoP,
+    CIBA, token exchange, dynamic client registration.
+  </Card>
+  <Card title="Keycloak-compatible" icon="puzzle">
+    The realm model, role claims (`realm_access` / `resource_access`), the Admin
+    REST API shape, adapter-config downloads, and `kc_idp_hint` behave the way your
+    existing Keycloak integrations expect. Every deliberate difference is
+    documented in `tests/KEYCLOAK_DIFFS.md`.
+  </Card>
+  <Card title="Fast and small" icon="rocket">
+    Faster than Keycloak 24 in every measured k6 scenario — up to 11.2× the
+    throughput, ~5× less memory, and an 8.5× smaller image. One self-contained
+    Rust binary; `#![forbid(unsafe_code)]` across the whole workspace.
+  </Card>
+  <Card title="Scales horizontally" icon="server">
+    Shared state lives in PostgreSQL + Redis, and storage-backed signing keys are
+    shared by every node. Run a single binary or a multi-node cluster behind a
+    load balancer — a two-node demo stack ships in the repo.
+  </Card>
+  <Card title="Built for AI agents" icon="star">
+    First-class support for agentic workloads: DPoP sender-constrained tokens,
+    RFC 8693 token exchange with per-call audience/scope attenuation, and CIBA
+    human step-up approval — with end-to-end MCP guides and recorded demos.
+  </Card>
+  <Card title="Federation &amp; MFA included" icon="padlock">
+    LDAP, Active Directory, and Kerberos/SPNEGO user federation; identity brokering
+    with Google, GitHub, and Microsoft; TOTP, WebAuthn/passkeys, and email-code
+    login. No enterprise edition — everything is in the open repository.
+  </Card>
+</CardGrid>
+
+## Free and open source
+
+issuerd is free and open-source software, released under the
+[Apache-2.0 license](https://github.com/issuerd/issuerd/blob/main/LICENSE). The full
+source, the conformance evidence, the performance methodology, and every
+benchmark script are public in the
+[GitHub repository](https://github.com/issuerd/issuerd).
+
+Found a security issue? Please report it privately to **security@issuerd.org** —
+see the [vulnerability reporting policy](/security/#vulnerability-reporting).
+
+<CardGrid>
+  <LinkCard
+    title="Get started"
+    href="/getting-started/"
+    description="Docker demo stack or build from source — first realm and first token in minutes."
+  />
+  <LinkCard
+    title="Documentation overview"
+    href="/docs-overview/"
+    description="Deployment, administration, agentic IAM, federation, and operations guides."
+  />
+</CardGrid>
