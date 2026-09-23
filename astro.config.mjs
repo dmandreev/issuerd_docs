@@ -20,6 +20,35 @@ export default defineConfig({
         replacesTitle: true,
       },
       favicon: '/favicon.png',
+      // Social preview card (Telegram/Twitter/Slack link unfurls). Starlight
+      // already emits og:title/description/url and twitter:card per page;
+      // these add the shared image. Regenerate with `npm run generate-social-card`.
+      head: [
+        {
+          tag: 'meta',
+          attrs: { property: 'og:image', content: 'https://issuerd.org/og-image.png' },
+        },
+        { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+        { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+        {
+          tag: 'meta',
+          attrs: {
+            property: 'og:image:alt',
+            content: 'issuerd — Identity & Access Management in Rust',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: { name: 'twitter:image', content: 'https://issuerd.org/og-image.png' },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            name: 'twitter:image:alt',
+            content: 'issuerd — Identity & Access Management in Rust',
+          },
+        },
+      ],
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/issuerd/issuerd' },
       ],

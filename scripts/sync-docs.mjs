@@ -16,9 +16,12 @@
  *     are copied into public/images/ as well and rewritten likewise;
  *   - file names are lowercased; README.md becomes docs-overview.md (the site
  *     landing page index.mdx is hand-maintained and never synced).
+ *   - ROOT_FILES (e.g. TRADEMARK.md) live in the repository root rather than
+ *     docs/; they are synced the same way, except that their root-relative
+ *     links (webclientsrc/…, docs/…) become absolute GitHub URLs.
  *
  * Usage:
- *   node scripts/sync-docs.mjs              # sync all *.md from ../issuerd/docs
+ *   node scripts/sync-docs.mjs              # sync all *.md from ../issuerd/docs + ROOT_FILES
  *   node scripts/sync-docs.mjs security.md  # sync one file
  *
  * WARNING: this overwrites the destination file wholesale. If the site copy
@@ -30,14 +33,19 @@ import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SRC = join(root, '..', 'issuerd', 'docs');
+const REPO = join(root, '..', 'issuerd');
+const SRC = join(REPO, 'docs');
 const DEST = join(root, 'src', 'content', 'docs');
 const IMG_DEST = join(root, 'public', 'images');
 const GITHUB_BLOB = 'https://github.com/issuerd/issuerd/blob/main/';
 
+// Files synced from the repository root (not docs/). Their relative links
+// are root-relative, so every relative link becomes an absolute GitHub URL.
+const ROOT_FILES = ['TRADEMARK.md'];
+
 const args = process.argv.slice(2);
 const available = readdirSync(SRC).filter((f) => f.endsWith('.md'));
-const wanted = args.length ? args : available;
+const wanted = args.length ? args : [...available, ...ROOT_FILES];
 
 mkdirSync(DEST, { recursive: true });
 mkdirSync(IMG_DEST, { recursive: true });
@@ -46,22 +54,23 @@ mkdirSync(IMG_DEST, { recursive: true });
 cpSync(join(SRC, 'images'), IMG_DEST, { recursive: true });
 
 for (const file of wanted) {
-  if (!available.includes(file)) {
+  const isRootFile = ROOT_FILES.includes(file);
+  if (!isRootFile && !available.includes(file)) {
     console.error(`skip: ${file} not found in ${SRC} (have: ${available.join(', ')})`);
     continue;
   }
-  const text = readFileSync(join(SRC, file), 'utf8');
+  const text = readFileSync(join(isRootFile ? REPO : SRC, file), 'utf8');
   const isIndex = file.toLowerCase() === 'readme.md';
   const slug = isIndex ? 'docs-overview' : file.replace(/\.md$/i, '').toLowerCase();
-  const { title, description, body } = transform(text);
+  const { title, description, body } = transform(text, { rootRelative: isRootFile });
   const fm = ['---', `title: ${yamlString(title)}`];
   if (description) fm.push(`description: ${yamlString(description)}`);
   fm.push('---');
   writeFileSync(join(DEST, `${slug}.md`), `${fm.join('\n')}\n\n${body}`);
-  console.log(`synced: docs/${file} -> src/content/docs/${slug}.md`);
+  console.log(`synced: ${isRootFile ? '' : 'docs/'}${file} -> src/content/docs/${slug}.md`);
 }
 
-function transform(text) {
+function transform(text, { rootRelative = false } = {}) {
   const lines = text.split('\n');
   let title = 'Untitled';
   const h1 = lines.findIndex((l) => /^#\s+\S/.test(l));
@@ -90,6 +99,10 @@ function transform(text) {
     .replace(/\]\(([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/g, (_, p, a) => `](/${p.toLowerCase()}/${a ?? ''})`)
     // fence languages unknown to Expressive Code
     .replace(/```cron\b/g, '```txt');
+  if (rootRelative) {
+    // Repo-root files: every remaining relative link leaves the docs set.
+    body = body.replace(/\]\((?!https?:|\/|#|mailto:)([^)]+)\)/g, `](${GITHUB_BLOB}$1)`);
+  }
   return { title, description, body };
 }
 
