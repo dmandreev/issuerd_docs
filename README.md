@@ -9,8 +9,9 @@ The reference documentation lives in the main repository at [`issuerd/docs/`](ht
 To (re)import pages from the reference docs:
 
 ```sh
-npm run sync-docs                 # sync every *.md from ../issuerd/docs
+npm run sync-docs                 # sync every *.md from ../issuerd/docs + TRADEMARK.md from the repo root
 npm run sync-docs -- security.md  # sync a single file
+npm run generate-social-card      # regenerate public/og-image.png (social preview card)
 ```
 
 The script converts each document for Starlight (frontmatter title/description, route-style links, lowercased slugs, `README.md` → documentation overview page) and **overwrites** the destination file — if a page was expanded on the site, re-apply the expansion after syncing. The site landing page (`index.mdx`) is hand-maintained and never synced. Both repositories are expected as siblings (`issuerd/` and `issuerd_docs/` under one parent).
