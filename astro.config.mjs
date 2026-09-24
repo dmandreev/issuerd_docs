@@ -21,11 +21,19 @@ export default defineConfig({
         dark: './src/assets/white-logo.svg',
         replacesTitle: true,
       },
-      favicon: '/favicon.png',
+      favicon: '/favicon.ico',
       // Social preview card (Telegram/Twitter/Slack link unfurls). Starlight
       // already emits og:title/description/url and twitter:card per page;
       // these add the shared image. Regenerate with `npm run generate-social-card`.
       head: [
+        {
+          tag: 'link',
+          attrs: { rel: 'icon', type: 'image/png', sizes: '192x192', href: '/favicon.png' },
+        },
+        {
+          tag: 'link',
+          attrs: { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
+        },
         {
           tag: 'meta',
           attrs: { property: 'og:image', content: 'https://issuerd.org/og-image.png' },
