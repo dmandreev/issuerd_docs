@@ -48,7 +48,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" 
     ${paths.join('\n    ')}
   </g>
   <text x="${W / 2}" y="430" font-family="Arial, sans-serif" font-size="40"
-        fill="${TEXT}" text-anchor="middle">Fast, modern IAM for humans, machines and AI agents.</text>
+        fill="${TEXT}" text-anchor="middle">Fast, modern IAM for humans, machines and AI agents</text>
   <text x="${W / 2}" y="492" font-family="Arial, sans-serif" font-size="28"
         fill="${MUTED}" text-anchor="middle">Conformance-tested OIDC/OAuth2 — Keycloak-compatible — horizontally scalable</text>
   <text x="${W / 2}" y="576" font-family="Arial, sans-serif" font-size="26"
