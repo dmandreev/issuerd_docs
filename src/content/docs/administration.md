@@ -143,8 +143,10 @@ http://<host>:<port>/admin/console
 
 The **Keys** page (`GET /admin/realms/{realm}/keys`) lists the signing keys with algorithm, `kid`, and status (ACTIVE/PASSIVE), and offers:
 
-- **Rotate** — `POST .../keys/rotate`, optionally with `{"algorithm": "ES256", "key_size": 2048}` (algorithm defaults to the newest active key's, RS256/2048 when no key exists; RSA sizes 2048–8192; HMAC algorithms are rejected). Rotation keeps exactly one active key **per algorithm**: other active keys of the same algorithm are demoted to passive.
+- **Rotate** — `POST .../keys/rotate`, optionally with `{"algorithm": "ES256", "key_size": 2048}` (algorithm defaults to the newest active key's, the server-default EdDSA when no key exists; RSA sizes 2048–8192; HMAC algorithms are rejected). Rotation keeps exactly one active key **per algorithm**: other active keys of the same algorithm are demoted to passive. On an empty key set the rotation establishes the fresh-deployment pair — the requested key plus an active RS256 key (the OIDC Core mandatory-to-implement algorithm) — so discovery advertises RS256 from the start.
 - **Disable** — `PUT .../keys/{kid}/disable` marks a key passive: it stays in the JWKS and still validates previously issued tokens, but never signs new ones. The last remaining active key cannot be disabled.
+
+**Choosing an algorithm.** New deployments default to **EdDSA (Ed25519)**: the first-boot EdDSA key signs for realms without an explicit setting — fast verification and small keys. The first boot also creates an active **RS256** key alongside it, because OIDC Core makes RS256 mandatory-to-implement: discovery advertises it and realms pinned to RS256 work without a rotation. Otherwise treat **RS256** as an explicit compatibility choice for clients that only understand RSA (pin the realm's `default_signature_algorithm` attribute to `RS256` on the Tokens tab), and pick **ES256** where Ed25519 is unavailable in your client stack. The `HS*` (HMAC) entries in the algorithm dropdowns are not applicable to realm token signing — the realm attribute ignores them and rotation rejects them. Context: the `rsa` crate is used only for key *generation* (signing/verification use `ring`), so the `RUSTSEC-2023-0071` (Marvin) RSA-decryption padding oracle is unreachable here. See [configuration.md — Token signing algorithm](/configuration/#token-signing-algorithm) for the full policy.
 
 Signing keys are **server-global** (shared by all realms and cluster nodes via the `signing_keys` table); the realm segment in the path is namespace parity with Keycloak only. Rotation/disable reloads this node's keystore immediately; peer cluster nodes pick the change up via JWKS polling — see [CLUSTERING.md](/clustering/).
 
@@ -439,7 +441,7 @@ curl -s -X POST "$IC/admin/realms/acme/user-federation/ldap-main/sync?strategy=f
 
 ```bash
 curl -s "$IC/admin/realms/acme/keys" -H "Authorization: Bearer $TOKEN"
-# → {"active": {"RS256": "<kid>"}, "passive": [...]}
+# → {"active": {"EdDSA": "<kid>", "RS256": "<kid2>"}, "passive": [...]}
 
 curl -s -X POST "$IC/admin/realms/acme/keys/rotate" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \

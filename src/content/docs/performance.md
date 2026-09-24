@@ -403,7 +403,7 @@ regression gating:
 
 | Metric | Target | Notes |
 |--------|--------|-------|
-| Token issuance (password grant) | < 2 ms p99 | RS256 signing + storage write |
+| Token issuance (password grant) | < 2 ms p99 | EdDSA signing + storage write |
 | Token validation (stateless JWT) | < 0.5 ms p99 | JWKS lookup + signature verify |
 | Auth code flow (password) | < 50 ms p99 | Full redirect + login + code exchange |
 | Throughput (token validation) | > 1000 req/s per core | UserInfo endpoint |

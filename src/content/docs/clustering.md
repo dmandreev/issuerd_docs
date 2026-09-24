@@ -40,9 +40,11 @@ The critical cluster invariant: every node must sign with the same active key
 live in the `signing_keys` table in PostgreSQL:
 
 - At boot a node loads the full key set. On first boot (empty table) it
-  generates an RS256 key and persists it. A concurrent first boot may persist a
-  second key — benign: both are published in JWKS and validate; all nodes sign
-  with the newest active key.
+  generates the initial pair — an EdDSA key (the signing default) and an
+  active RS256 key (OIDC Core §15.1 mandatory-to-implement, advertised in
+  discovery) — and persists them. A concurrent first boot may persist a
+  second pair — benign: all are published in JWKS and validate; all nodes
+  sign with the newest active key of the resolved algorithm.
 - Keys survive restarts, so outstanding tokens stay valid across deploys.
 - Each node polls the table every `cluster.jwks_refresh_interval_secs` and
   reloads its keystore + JWKS snapshot when the set changes — keys added by a
@@ -51,6 +53,25 @@ live in the `signing_keys` table in PostgreSQL:
   rotation demotes only same-algorithm actives). A realm's
   `default_signature_algorithm` attribute selects which active key signs its
   tokens; all nodes resolve the same key from the shared set.
+
+#### Encrypting the keys at rest
+
+With `[crypto.key_encryption]` configured (see
+[configuration.md](/configuration/#cryptokey_encryption)) the table holds
+AES-256-GCM ciphertext instead of plaintext DER. Cluster rules:
+
+- **Every node must carry the identical section** (same active `key_id` /
+  `key_base64` and the same `previous_keys`): nodes decrypt the shared rows
+  with it, and any node may be the one to write a rotated key. A node booted
+  with the wrong KEK fails closed at startup.
+- **Enable only after every node runs a version that supports it.** Rows
+  written by a KEK-enabled binary have `private_der = NULL`, which an older
+  binary cannot read — during a rolling upgrade, keep the section off until
+  the last node is on the new version.
+- Each boot runs a **re-encryption sweep** (after migrations, before the
+  keystore loads) that rewrites any plaintext rows or rows encrypted under a
+  previous KEK under the active KEK — that is what makes first-time enablement
+  and KEK rotation converge across the cluster.
 
 ### Login-failure counters
 

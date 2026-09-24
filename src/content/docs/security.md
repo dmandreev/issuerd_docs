@@ -140,10 +140,36 @@ cluster node signs with the same active key and validates tokens issued by its p
 > endpoints is namespace parity with Keycloak only. See [CLUSTERING.md](/clustering/) for the
 > multi-node contract.
 
+### Encryption at rest
+
+By default the `signing_keys` table holds private key material in **plaintext** — anyone who can
+read a database dump can mint tokens for every realm. The optional
+[`[crypto.key_encryption]`](/configuration/#cryptokey_encryption) section enables **envelope
+encryption**: the server encrypts each signing key with a config/env-provided 32-byte Key
+Encryption Key (AES-256-GCM, random per-key nonce) before writing, so the table only ever holds
+ciphertext and the KEK never touches the database.
+
+- **Enablement is transparent**: a boot-time sweep re-encrypts legacy plaintext rows, reads
+  decrypt on the fly, and key rotation writes ciphertext from the start. Existing deployments
+  without the section boot unchanged (with a startup WARN recommending the feature).
+- **Fail closed**: a node booted with the wrong KEK refuses to start; there is no plaintext
+  fallback. Every cluster node must carry the identical section.
+- **Operational consequences move to the KEK**: back it up alongside the config (a dump without
+  the KEK cannot recover the signing keys), and rotate it via the `previous_keys` window —
+  procedures in [backup-and-upgrade.md](/backup-and-upgrade/#signing-key-encryption-kek).
+- **Residual exposure**: while the server runs, the resident signing key lives in process memory
+  (it must sign); envelope encryption protects the database at rest, not the running node.
+  Transient decrypted buffers and retired keys are zeroized on drop.
+
 ### Per-realm signing algorithm
 
 Supported signing algorithms: **RS256/RS384/RS512** (RSA), **ES256/ES384/ES512** (ECDSA, ES512 via
-P-521), and **EdDSA** (`crates/issuerd-core/src/traits.rs`). A realm selects its algorithm with the
+P-521), and **EdDSA** (`crates/issuerd-core/src/traits.rs`). The server default is **EdDSA**: the
+first boot persists an Ed25519 key (the signing default) AND an active RS256 key — OIDC Core §15.1
+makes RS256 mandatory-to-implement, so discovery advertises it from the start — and realms without
+an explicit setting sign with the newest
+active key of the default algorithm, so fresh deployments issue EdDSA tokens (RS256 remains fully
+supported as an explicit compatibility choice; other RSA keys are only generated on operator opt-in). A realm selects its algorithm with the
 realm attribute `default_signature_algorithm` (e.g. `"ES256"`); issuance then picks the newest
 active key of that algorithm. Symmetric `HS*` values are ignored (an HMAC "public" JWK exposes no
 verification material), and absent/invalid values fall back to the newest active key overall.
@@ -169,7 +195,8 @@ Content-Type: application/json
 {"algorithm": "ES256", "key_size": 2048}
 ```
 
-The body is optional and defaults to the newest active key's parameters (RS256/2048 when no key
+The body is optional and defaults to the newest active key's parameters (the server-default
+algorithm EdDSA when no key
 exists). Rotation generates a new active key and demotes the other active keys **of the same
 algorithm** — exactly one active key per algorithm is kept, so realms pinned to other algorithms
 are unaffected. RSA `key_size` must be 2048–8192 bits; `HS*` algorithms are rejected with 400.
@@ -507,7 +534,12 @@ fresh proof whose thumbprint matches and whose `ath` ties it to the token — ot
 a bound refresh token presented without its proof fails with `invalid_grant`. Proof `jti` values
 are single-use, enforced through the distributed cache (`dpop_jti:{realm}:{jti}`, failing closed
 when the cache is down); proofs older than 300 s (60 s future leeway) are rejected. Server-provided
-nonces (RFC 9449 §8) are intentionally not implemented.
+nonces (RFC 9449 §8/§9) are available as an opt-in strict mode (`[dpop.nonce]`, default
+`"disabled"`): the server issues unguessable single-use nonces in the `DPoP-Nonce` response
+header (`dpop-nonce:{realm}:{nonce}` cache entries with the configured TTL), and in `"required"`
+mode a proof without a live nonce is rejected with the RFC `use_dpop_nonce` challenge — a
+captured proof can no longer be replayed even with a freshly minted `iat`/`jti`. See
+[configuration.md](/configuration/) — "[dpop]".
 
 ### PKCE
 

@@ -161,7 +161,7 @@ Knowing what the server does on its first start saves confusion later. All of th
 **On every boot, all backends:**
 
 - The JSON-file backend loads its snapshot; PostgreSQL runs pending schema migrations automatically.
-- The signing-key set is loaded from shared storage; if it is empty (first ever boot), a fresh RS256 key pair is generated and persisted so restarts — and every node of a cluster — converge on the same keys.
+- The signing-key set is loaded from shared storage; if it is empty (first ever boot), the initial pair — a fresh EdDSA (Ed25519) key (the signing default) and an active RS256 key (mandatory-to-implement per OIDC Core, so discovery advertises it) — is generated and persisted so restarts — and every node of a cluster — converge on the same keys.
 
 **Automatic master-realm bootstrap — in-memory and JSON-file backends only:**
 

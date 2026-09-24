@@ -24,7 +24,7 @@ Issuerd separates **durable** state (PostgreSQL or a JSON snapshot file) from **
 |---|---|---|
 | Realms, users, credentials, clients, roles, groups, client scopes, consents, identity-provider configs and links, flow configs | PostgreSQL | **Yes** |
 | SSO sessions (`user_sessions`, `client_sessions`) | PostgreSQL | **Yes** — restoring the DB restores logged-in sessions |
-| **Signing keys** (`signing_keys` table: private DER + public JWK) | PostgreSQL | **Yes** — this is what keeps issued tokens valid across restores |
+| **Signing keys** (`signing_keys` table: private DER + public JWK) | PostgreSQL | **Yes** — this is what keeps issued tokens valid across restores. With `[crypto.key_encryption]` enabled the rows are ciphertext; the **KEK must be backed up separately** (it is never in the DB — see below) |
 | Login/admin event audit trail (`events`, `admin_events`) | PostgreSQL | **Yes** (compliance data) |
 | Provision markers (`provision_markers`) | PostgreSQL | **Yes** (comes along automatically) |
 | Auth codes, pending login/consent/registration/action flows, device and CIBA state, PAR requests, revocation blocklist, login-failure counters, registration access tokens | Redis | **No** — ephemeral by design |
@@ -38,7 +38,7 @@ All Redis content is short-lived runtime state. The key prefixes below are defin
 
 | Key prefix | Contents | TTL |
 |---|---|---|
-| `auth_code:{code}` | Authorization codes not yet exchanged at the token endpoint | 600 s |
+| `auth_code:{code}` | Authorization codes not yet exchanged at the token endpoint | `[oauth] auth_code_ttl_secs` (default 600 s; per-realm `auth_code_ttl_secs` attribute) |
 | `used_auth_code:{code}` | Reuse-detection markers for exchanged codes (hold the minted tokens so a replay revokes them) | Remaining lifetime of the minted tokens |
 | `pending_auth:{realm}:{flow_id}` | In-flight browser login flows (multi-step authenticators, MFA challenges) | Flow lifetime |
 | `pending_consent:{realm}:{execution}` | Consent screens awaiting a user decision | Flow lifetime |
@@ -52,6 +52,7 @@ All Redis content is short-lived runtime state. The key prefixes below are defin
 | `login-lockout:{realm}:{username}:{ip}` | Brute-force lockout markers | Computed lockout duration |
 | `action:{token_id}` | Action tokens (reset-credentials / execute-actions email links) | Action-token lifetime |
 | `dpop_jti:{realm}:{jti}` | DPoP proof single-use markers | Proof acceptance window |
+| `dpop-nonce:{realm}:{nonce}` | Server-provided DPoP nonces (opt-in `[dpop.nonce]`; single-use, consumed on verification) | `[dpop.nonce] lifetime_secs` (default 30 s) |
 | `email-code:{realm}:{user_id}` | Passwordless email-login codes | Code lifetime |
 | `webauthn-reg:{realm}:{user_id}`, `totp-enroll:{realm}:{user_id}` | In-flight passkey registration ceremonies and unverified TOTP enrollment secrets | Ceremony/enrollment lifetime |
 | `broker_state:`, `broker_fbl:` | Identity-brokering SSO state and first-broker-login flows | 600 s |
@@ -92,6 +93,7 @@ Both backends trigger the automatic master-realm bootstrap on first start (with 
 | Themes directory (`[themes] dir`, default `themes/`) | Custom login themes; the repo ships the default theme in `themes/issuerd/` |
 | TLS certificate and key (`[tls] cert_path` / `key_path`) | Needed to serve the same identity on restore |
 | Environment overrides | Any `ISSUERD_*` variables set in the systemd unit / container spec override the file — record them alongside it (see [configuration.md](/configuration/)) |
+| Signing-key KEK (when `[crypto.key_encryption]` is enabled) | The KEK is **never in the database** — back up the `key_base64` value (and any `previous_keys`) wherever you sourced it: the env definitions of the systemd unit/container spec, or the permission-protected config file |
 
 ## Backup procedures
 
@@ -130,6 +132,48 @@ tar -czf /var/backups/issuerd/config-$(date +%F).tar.gz \
   /var/lib/issuerd/themes /var/lib/issuerd/certs
 ```
 
+### Signing-key encryption KEK
+
+When `[crypto.key_encryption]` is enabled, a database dump contains **only
+ciphertext** signing-key material — that is the point of the feature — and the
+consequences for backup and recovery invert the usual assumptions:
+
+- **The KEK is not in the dump.** It comes from configuration
+  (`key_base64`, preferably the `ISSUERD_CRYPTO__KEY_ENCRYPTION__KEY_BASE64`
+  env var) and must be backed up through the same channel that delivers it —
+  a secrets manager entry, the systemd unit / container spec, or the
+  permission-protected config file. Back up every configured KEK: the active
+  one **and** each `previous_keys` entry (rows encrypted under a previous KEK
+  still need it until the boot sweep has re-encrypted them).
+- **A dump without the KEK cannot recover the signing keys.** Booting a
+  restored database without the matching KEK fails closed at startup
+  (`signing-key encryption error`). The only KEK-less recovery is to start
+  with an empty `signing_keys` table: the server generates fresh keys, every
+  previously issued token becomes invalid, and all users must re-authenticate
+  (SSO sessions die with the keys). That is a deliberate security property —
+  a stolen dump must not yield token-signing capability — plan the KEK backup
+  so it never comes to this.
+- **Restoring with the KEK is transparent**: point the daemon at the restored
+  database with the same `[crypto.key_encryption]` section and the keys
+  decrypt on boot; pre-backup tokens and SSO sessions stay valid exactly as
+  with plaintext storage.
+- **KEK rotation procedure** (manual; an automated KMS-mediated flow is future
+  work behind the `KeyEncryptionKeyProvider` SPI):
+  1. Generate the new KEK (`openssl rand -base64 32`).
+  2. Set the new `key_id` / `key_base64` and move the old pair into
+     `previous_keys` (the old KEK stays decrypt-only).
+  3. Roll the config to **all** nodes and restart them. Each boot's
+     re-encryption sweep rewrites every row under the new active KEK.
+  4. Verify convergence: `SELECT DISTINCT kek_kid FROM signing_keys;` must
+     return only the new `key_id`.
+  5. Remove the old `previous_keys` entry (and retire the old KEK from your
+     backup once the retention window for pre-rotation dumps expires — dumps
+     taken before step 3 still need it).
+- **Schema note:** the encrypted columns arrived in migration
+  `017_signing_key_encryption.sql` (expand phase — legacy plaintext rows keep
+  working and are swept to ciphertext). Dropping the plaintext `private_der`
+  column is a later contract-phase migration, announced in `CHANGELOG.md`.
+
 ## Restore procedures
 
 ### PostgreSQL restore
@@ -145,7 +189,7 @@ tar -czf /var/backups/issuerd/config-$(date +%F).tar.gz \
    (For plain-SQL dumps made without `--format=custom`, use `psql --dbname=issuerd_restore --file=...` instead.)
 
 2. Point the server at the restored database — set `[storage.postgres] url` in `issuerd.toml` (or `ISSUERD_STORAGE__POSTGRES__URL`) to the new database name.
-3. Start the daemon. Boot applies any pending schema migrations automatically (see below); on a dump from the same version none are pending. The sqlx migration ledger and the `provision_markers` table are part of the dump, so already-applied migrations are skipped and provisioning does **not** re-run against restored data.
+3. Start the daemon. Boot applies any pending schema migrations automatically (see below); on a dump from the same version none are pending. The sqlx migration ledger and the `provision_markers` table are part of the dump, so already-applied migrations are skipped and provisioning does **not** re-run against restored data. If the dump holds encrypted signing keys (`[crypto.key_encryption]` was enabled), the **same KEK section must be configured** or boot fails closed — see "Signing-key encryption KEK" above.
 4. If you restored under a different database name and are satisfied, you can later drop the old database; alternatively restore over the original name after dropping/recreating it.
 
 ### Post-restore verification checklist
@@ -172,7 +216,7 @@ Because signing keys are restored with the database, tokens and SSO sessions iss
 
 ## Schema migrations
 
-Issuerd manages its PostgreSQL schema with embedded, numbered SQL migrations in `crates/issuerd-storage/migrations/` (`001_initial.sql` … currently through `016_client_sessions_session_index.sql`):
+Issuerd manages its PostgreSQL schema with embedded, numbered SQL migrations in `crates/issuerd-storage/migrations/` (`001_initial.sql` … currently through `017_signing_key_encryption.sql`):
 
 - Migrations are compiled into the binary and **applied automatically at startup** (`sqlx::migrate!`, invoked from `ServerState::from_config` in `crates/issuerd-server/src/state.rs` and from `PostgresStorage::run_migrations`). The `issuerd provision` CLI subcommand runs them too before applying a provision file.
 - Applied migrations are recorded in the database's sqlx migration ledger, so restarts and subsequent boots only run what is new.
