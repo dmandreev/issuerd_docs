@@ -11,6 +11,7 @@
     "generate-social-card": "node scripts/generate-social-card.mjs"
   },
   "dependencies": {
+    "@astrojs/sitemap": "^3.7.4",
     "@astrojs/starlight": "^0.42.1",
     "@wave-rf/starlight-llm-tools": "^0.3.1",
     "astro": "^7.3.3",

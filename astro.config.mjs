@@ -1,11 +1,13 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import sitemap from '@astrojs/sitemap';
 import starlight from '@astrojs/starlight';
 import starlightLlmTools from '@wave-rf/starlight-llm-tools';
 
 export default defineConfig({
   site: 'https://issuerd.org',
   integrations: [
+    sitemap(),
     starlight({
       plugins: [starlightLlmTools()],
       title: 'issuerd',
