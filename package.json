@@ -8,7 +8,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "sync-docs": "node scripts/sync-docs.mjs",
-    "generate-social-card": "node scripts/generate-social-card.mjs"
+    "generate-social-card": "node scripts/generate-social-card.mjs",
+    "generate-favicon": "node scripts/generate-favicon.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",
