@@ -33,7 +33,7 @@ Everything in this guide is seeded demo content with well-known credentials — 
 
 | Installation option | Requirements |
 |---|---|
-| A — Docker demo stack | Docker with the Compose plugin (`docker compose`). Nothing else — the image build compiles the server and the web client inside Docker. |
+| A — Docker demo stack | Docker with the Compose plugin (`docker compose`). Nothing else — the stack pulls the published server image from Docker Hub, no compilation. |
 | B — Build from source | Rust toolchain **1.95+** (the workspace MSRV). Node.js **20+** is additionally required if you want the embedded browser consoles (admin console, account console, login pages). |
 
 No database is needed for a first run: option B uses the in-memory storage backend by default, and option A brings its own PostgreSQL and Redis containers.
@@ -43,16 +43,24 @@ No database is needed for a first run: option B uses the in-memory storage backe
 The root `docker-compose.yml` is the self-contained local demo stack (compose project name `issuerd-demo`). From the repository root:
 
 ```bash
-docker compose up --build
+docker compose up
 ```
 
-The first build compiles the release binary and the embedded web client inside the container (see the multi-stage root `Dockerfile`), so expect it to take a while; subsequent starts reuse the image and come up in seconds.
+This pulls the published `issuerd/issuerd:latest` image from Docker Hub — no compilation involved, so the stack is up in about a minute (most of it the one-time image download).
+
+To build the image from the local sources instead, layer on the from-source override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.from-source.yml up --build
+```
+
+The first source build compiles the release binary and the embedded web client inside the container (see the multi-stage root `Dockerfile`), so plan on roughly 10–20 minutes; subsequent builds reuse the Docker layer cache and are much faster.
 
 The stack starts three services:
 
 | Service | Container | Role | Exposure |
 |---|---|---|---|
-| `issuerd` | `issuerd-demo-server` | Issuerd server, built from the repository | `http://localhost:8080` |
+| `issuerd` | `issuerd-demo-server` | Issuerd server (published Docker Hub image) | `http://localhost:8080` |
 | `postgres` | `issuerd-demo-postgres` | PostgreSQL 15 (persistent state) | internal only, no host port |
 | `redis` | `issuerd-demo-redis` | Redis 7 (transient state: auth codes, pending flows, single-use tokens, login-failure counters) | internal only, no host port |
 

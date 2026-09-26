@@ -235,7 +235,7 @@ Check the version before and after: `issuerd --version`, and the startup log lin
 
 1. **Back up.** Take a fresh `pg_dump` (plus config/themes archive) — this is also your rollback anchor, see [Rollback](#rollback).
 2. **Stop the daemon.** Send SIGTERM (`systemctl stop issuerd`); the server shuts down gracefully — when serving TLS directly it allows up to 30 seconds for in-flight requests, while plain HTTP drains them without a hard timeout.
-3. **Replace the binary or image.** Install the new package, or bump the image tag and recreate the container (for the compose demo stack: `docker compose up -d --build`).
+3. **Replace the binary or image.** Install the new package, or bump the image tag and recreate the container (for the compose demo stack: `docker compose pull && docker compose up -d`).
 4. **Start.** Boot applies pending migrations automatically; expect the migration log lines on the first start.
 5. **Verify** with the [post-restore checklist](#post-restore-verification-checklist): `/ready`, JWKS, a test login, the admin console.
 

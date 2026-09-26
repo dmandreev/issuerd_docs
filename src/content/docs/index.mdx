@@ -32,8 +32,9 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
   <Card title="Conformance-tested OIDC/OAuth2" icon="approve-check-circle">
     Verified with the official OpenID Foundation conformance suite (release v5.2.4):
     the Config OP, Basic OP, and Form Post OP plans pass with 0 failures and 0
-    warnings. Advanced OAuth 2.1 capabilities included: PAR, JAR/JARM, RAR, DPoP,
-    CIBA, token exchange, dynamic client registration.
+    warnings. Every [release](https://github.com/issuerd/issuerd/releases)
+    ships an attested conformance report bundle. Advanced OAuth 2.1 capabilities included: PAR,
+    JAR/JARM, RAR, DPoP, CIBA, token exchange, dynamic client registration.
   </Card>
   <Card title="Keycloak-compatible" icon="puzzle">
     The realm model, role claims (`realm_access` / `resource_access`), the Admin
@@ -67,8 +68,8 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 issuerd is free and open-source software, released under the
 [Apache-2.0 license](https://github.com/issuerd/issuerd/blob/main/LICENSE). The full
-source, the conformance evidence, the performance methodology, and every
-benchmark script are public in the
+source, the conformance evidence (an attested report bundle on every
+[release](https://github.com/issuerd/issuerd/releases)), the performance methodology, and every benchmark script are public in the
 [GitHub repository](https://github.com/issuerd/issuerd). The Issuerd name and
 logo are unregistered trademarks of the project — see the
 [trademark policy](/trademark/).

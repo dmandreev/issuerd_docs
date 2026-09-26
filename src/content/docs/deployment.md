@@ -66,17 +66,17 @@ docker run --rm -p 8080:8080 \
 
 ### The demo stack (`docker-compose.yml`)
 
-The root compose file (project name `issuerd-demo`) is the quickest way to see a production-shaped deployment: one Issuerd node backed by PostgreSQL and Redis, built from the repository.
+The root compose file (project name `issuerd-demo`) is the quickest way to see a production-shaped deployment: one Issuerd node backed by PostgreSQL and Redis, pulled as the published `issuerd/issuerd:latest` image from Docker Hub. (To build from local sources instead, add `-f docker-compose.from-source.yml` and `--build`; the first build compiles the release binary + web client and takes roughly 10–20 minutes.)
 
 ```bash
-docker compose up --build      # first build compiles the release binary + web client
+docker compose up              # pulls issuerd/issuerd:latest from Docker Hub
 docker compose down            # stop; the postgres-data volume keeps all state
 docker compose down -v         # stop AND wipe the volume (next start re-seeds)
 ```
 
 | Service | Container | Role | Exposure |
 |---|---|---|---|
-| `issuerd` | `issuerd-demo-server` | Server built from the root `Dockerfile`; healthcheck polls `/ready`; starts only after PostgreSQL and Redis are healthy | `http://localhost:8080` |
+| `issuerd` | `issuerd-demo-server` | Published Docker Hub image (`issuerd/issuerd:latest`); healthcheck polls `/ready`; starts only after PostgreSQL and Redis are healthy | `http://localhost:8080` |
 | `postgres` | `issuerd-demo-postgres` | PostgreSQL 15 Alpine, state in the `postgres-data` volume | internal only (no host port) |
 | `redis` | `issuerd-demo-redis` | Redis 7 Alpine, `--maxmemory 256mb --maxmemory-policy allkeys-lru`, no persistence | internal only (no host port) |
 
