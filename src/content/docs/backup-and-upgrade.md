@@ -109,7 +109,7 @@ pg_dump --host=localhost --username=issuerd --format=custom \
 
 A nightly cron entry with 14 days of retention:
 
-```txt
+```cron
 # /etc/cron.d/issuerd-backup
 15 3 * * * postgres pg_dump --format=custom --file=/var/backups/issuerd/issuerd-$(date +\%F).dump issuerd && find /var/backups/issuerd -name 'issuerd-*.dump' -mtime +14 -delete
 ```
