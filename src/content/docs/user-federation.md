@@ -30,7 +30,7 @@ A *federated user* is a normal local user row whose `federation_link` field hold
 When a federated user logs in through the browser login form, Issuerd validates the password against the directory, not against a local hash (`crates/issuerd-auth-flow/src/built_in.rs`, `UsernamePasswordAuthenticator`):
 
 1. **Local user exists and has a `federation_link`** — the password is checked with the linked provider. The LDAP provider builds the user DN as `{rdnLdapAttribute}={username},{usersDn}` (the username is RFC 4514-escaped, `crates/issuerd-federation/src/ldap/provider.rs`) and performs a simple bind with the supplied password. A rejected bind fails the login with the same generic "invalid credentials" error as a bad local password (and counts toward brute-force lockout). If the provider **errors** (directory down, misconfiguration) or no provider matches the link, Issuerd falls back to the user's local Argon2 credential, so a local break-glass password keeps working during a directory outage.
-2. **No local user exists** — Issuerd looks the username up across the realm's providers in priority order. On the first provider that finds the user *and* accepts the bind, the user is **imported on first login**: a local row is created with the federation link and — when a group mapper is configured — the `memberOf` attribute and reconciled group memberships. Only `memberOf`-derived group information is mapped from the directory; email and name attributes are not (see the warning under [What a full sync does](#what-a-full-sync-does)).
+2. **No local user exists** — Issuerd looks the username up across the realm's providers in priority order. On the first provider that finds the user *and* accepts the bind, the user is **imported on first login**: a local row is created with the federation link, the fields populated by the configured [LDAP mappers](#ldap-mappers) (email, first/last name, custom attributes), and — when a group mapper is configured — the `memberOf` attribute and reconciled group memberships.
 
 To avoid a timing side-channel that would reveal whether a username exists, the LDAP provider performs a bind attempt even when its search found no such user.
 
@@ -57,6 +57,7 @@ Both paths create the same kind of local row and reconcile group memberships the
 | Samba AD DC | `ldap` | `SAMBA` (or `ACTIVE_DIRECTORY`) | Primary test target (`tests/integration/federation_samba.rs`) |
 | OpenLDAP (generic RFC 4519 schema) | `ldap` | `GENERIC` | Tested (`tests/integration/federation_ldap.rs`) |
 | Microsoft Active Directory | `ldap` | `ACTIVE_DIRECTORY` | Tested against an AD DS lab (`tests/integration/federation_ad.rs`) |
+| LLDAP | `ldap` | `GENERIC` | Tested (lab rig; `uid`/`entryUUID` schema, virtual `memberOf`, exact object-class set `inetOrgPerson,posixAccount,mailAccount,person`; password writes via plain `userPassword` replace and the RFC 3062 exop) |
 | Kerberos KDC (SPNEGO) | `kerberos` | — | Tested against the Samba DC KDC |
 
 The `vendor` key selects directory-flavor defaults (username/UUID attribute names) and, for `ACTIVE_DIRECTORY`, the password-write encoding (`unicodePwd`). `SAMBA` currently shares the `ACTIVE_DIRECTORY` attribute defaults.
@@ -105,6 +106,57 @@ All keys live in the provider's `config` map and are **strings** (quote numbers 
 | `groupNameLdapAttribute` | | `cn` | Group name attribute. With the implemented `memberOf` strategy the group name is always the first RDN value of the `memberOf` DN; this key only matters for the not-yet-implemented `LoadGroupsByMemberAttribute` strategy. |
 | `memberOfLdapAttribute` | | `memberOf` | User attribute holding membership DNs. The provider explicitly requests it in searches (some directories do not return operational attributes for `"*"`). |
 | `groupsInclude` | | — | Comma-separated allowlist of group names (CNs), matched case-insensitively. Absent/empty means "every group under `groupsDn`". |
+
+### LDAP mappers
+
+Beyond the shorthand group keys above, an LDAP provider's `mappers` config key holds a JSON array of mapper entries — the same shape the Admin API mapper sub-resource manages (`GET|POST /admin/realms/{realm}/identity-provider/instances/{alias}/mappers`, `PUT|DELETE .../mappers/{name}`, each entry `{name, mapper_type, config}`). The mapper types are named after Keycloak's mapper type ids, and the per-mapper `config` uses Keycloak's dotted keys, so exported Keycloak federation configs translate directly. Entries are evaluated in list order; unknown or broker-side types are ignored, and a malformed `mappers` value is logged and skipped (the realm's federation keeps working). Parsing lives in `crates/issuerd-federation/src/mapper/mod.rs` (`mappers_from_config`).
+
+| `mapper_type` | Effect | Config keys |
+|---|---|---|
+| `user-attribute-ldap-mapper` | Maps one LDAP attribute onto a user field (`email`, `firstName`, `lastName`) or a custom user attribute | `user.attribute` + `ldap.attribute` (required); `is.mandatory.in.ldap` (`"true"` fails the lookup when the attribute is absent), `attribute.default.value`; `read.only` / `always.read.value.from.ldap` accepted for Keycloak parity |
+| `full-name-ldap-mapper` | Splits one LDAP attribute into first/last name (on the first space) | `ldap.full.name.attribute` (default `cn`) |
+| `group-ldap-mapper` | Group sync, identical semantics to the `groupsDn` shorthand | `groups.dn` (required); `group.name.ldap.attribute` (default `cn`), `memberof.ldap.attribute` (default `memberOf`), `groups.include` (Issuerd extension: comma-separated allowlist) |
+| `msad-user-account-control-mapper` | MS AD/Samba account state: `userAccountControl` → enabled flag, `pwdLastSet: 0` → `UPDATE_PASSWORD` user attribute | none |
+
+Rules:
+
+- A `group-ldap-mapper` entry **replaces** the `groupsDn` shorthand (never both — no double group mapping).
+- Attribute mappers make the provider request their LDAP attributes explicitly, so directories that hide operational attributes from `"*"` still work.
+- In the admin console the mapper dialog lists these types with their descriptions (driven by `GET /admin/enums/idp-mapper-types`).
+- Provision YAML: the `identity_providers` entries accept a first-class `mappers:` list (same entry shape, serialized into the `mappers` config key at boot):
+
+```yaml
+identity_providers:
+  - realm: acme
+    alias: corp-ldap
+    provider_id: ldap
+    config:
+      connectionUrl: ldaps://dc1.corp.example:636
+      # ... connection keys ...
+    mappers:
+      - name: email
+        mapper_type: user-attribute-ldap-mapper
+        config:
+          user.attribute: email
+          ldap.attribute: mail
+      - name: first name
+        mapper_type: user-attribute-ldap-mapper
+        config:
+          user.attribute: firstName
+          ldap.attribute: givenName
+      - name: last name
+        mapper_type: user-attribute-ldap-mapper
+        config:
+          user.attribute: lastName
+          ldap.attribute: sn
+      - name: groups
+        mapper_type: group-ldap-mapper
+        config:
+          groups.dn: OU=Groups,DC=corp,DC=example
+          groups.include: developers,ops
+```
+
+> **Note:** The `role-ldap-mapper` mapper type is **not** offered: role-name output has no downstream consumer in the sync path, so configuring it would be a no-op. Assign roles to the synced *groups* instead (group role mappings are preserved by sync).
 
 ### Admin API example
 
@@ -191,14 +243,14 @@ Implemented by `UserSynchronizer` (`crates/issuerd-federation/src/sync.rs`):
 4. **Updates existing users** whose stored `federation_link` matches the reporting provider: email, email-verified flag, first/last name, enabled flag, and attributes are overwritten from the directory record. An unparsable email value is dropped (stored as no email) rather than failing the user.
 5. **Reconciles group memberships** for every added/updated user (see the next section) and logs a summary line (`LDAP group sync reconciled`) with per-run counters.
 
-> **Warning:** No LDAP *attribute* mappers are wired in production — `build_default_mappers` installs only the group mapper (`crates/issuerd-federation/src/manager.rs`), so directory email/first/last-name attributes never reach the `FederatedUser` record. Because step 4 overwrites those fields on every run, **each sync clears an email address or name an administrator set locally on a federated user** (the provider reports them as empty); first-login imports likewise start with these fields empty.
+> **Warning:** Step 4 overwrites email/first/last name and attributes on every run from the provider's mapped values. When the provider has **no** [attribute mappers](#ldap-mappers) configured, the directory record carries none of those fields, so **each sync clears an email address or name an administrator set locally on a federated user**; first-login imports likewise start with these fields empty. Configure `user-attribute-ldap-mapper` / `full-name-ldap-mapper` entries to populate them from the directory instead.
 
 Conflict handling: a directory user whose username matches a **local, non-federated** user (or one linked to a *different* provider) is **not** touched — the run counts it in `failed` and logs a warning. `removed` is always `0`: **synchronization never deletes local users**, even when they disappear from the directory.
 
 ### What a synced user looks like
 
 - `federation_link` set to the provider id; **no local password credential** (authentication happens via LDAP bind).
-- Username from `usernameLdapAttribute`; enabled (note: directory account-state attributes such as AD's `userAccountControl` are **not** mapped to the enabled flag — see [Active Directory specifics](#active-directory-specifics)).
+- Username from `usernameLdapAttribute`; email, names, custom attributes, and the enabled flag as mapped by the provider's [LDAP mappers](#ldap-mappers) (with no mappers configured: enabled, everything else empty).
 - A `memberOf` user attribute containing the mapped membership names when a group mapper is configured.
 
 ## Group mapping semantics
@@ -280,7 +332,7 @@ The Kerberos provider does not support user synchronization (`stream_users` → 
 - Use `vendor: ACTIVE_DIRECTORY` (defaults: `sAMAccountName` / `objectGUID`). The `bindDn` is passed verbatim to the simple bind — use the full DN (e.g. `CN=issuerd-bind,OU=Service Accounts,DC=corp,DC=example`).
 - **Password writes require a secure channel.** For the AD vendor the provider writes passwords by replacing `unicodePwd` with the UTF-16LE, quote-wrapped encoding AD expects (`crates/issuerd-federation/src/ldap/provider.rs`); AD only accepts that attribute over LDAPS (or StartTLS) — point `connectionUrl` at `ldaps://<dc>:636` (this is exactly what the Samba integration test does for its password-write case). The generic vendor writes the plaintext `userPassword` attribute instead. For lab directories with self-signed certificates, `noTlsVerify: "true"` disables TLS certificate verification on `ldaps://`/StartTLS connections — **insecure, dev/lab only**.
 - **Samba accepts the previous password for a grace period.** Samba AD DC honors the *current and previous* password after a change (verified against the container; Windows AD does this only for computer accounts, OpenLDAP never). Right after a federated password change against Samba, the old password can still authenticate for a while.
-- **Account state is not mapped.** A `userAccountControl`/`pwdLastSet` mapper exists in the codebase (`crates/issuerd-federation/src/mapper/msad_account_control.rs`) but is not wired into the runtime mapper chain — sync always imports users as enabled, and AD's "user must change password at next logon" is not surfaced. Disabling an account in AD still blocks federated **password logins**, because AD itself refuses the LDAP bind; to lock a user out of everything (including existing sessions and SPNEGO), disable the local Issuerd user as well.
+- **Account state mapping is opt-in.** Add a `msad-user-account-control-mapper` entry to the provider's [mappers](#ldap-mappers) and sync imports AD's `userAccountControl` as the local enabled flag and `pwdLastSet: 0` as an `UPDATE_PASSWORD` user attribute. Without it, sync imports users as enabled and AD's "user must change password at next logon" is not surfaced. Either way, disabling an account in AD blocks federated **password logins** because AD itself refuses the LDAP bind; to lock a user out of everything (including existing sessions and SPNEGO), disable the local Issuerd user as well.
 
 ## Operating a federated realm
 
@@ -299,6 +351,8 @@ With `editMode: WRITABLE` (or `UNSYNCED`), password changes are **propagated to 
 - the admin `users/{id}/reset-password` endpoint (a `temporary` reset writes the temporary password to the directory and still forces the UPDATE_PASSWORD rotation at next login).
 
 Rules: the write-through only fires when the user's `federation_link` matches a live provider; the directory write replaces the local credential write entirely, and any stale local password credentials are **deleted** on success (login only consults local credentials when the provider errors — a leftover local password would otherwise act as a dormant fallback during directory outages). With `editMode: READONLY` the write fails with a 400-level "the external directory for this user does not accept password changes" error — keep `READONLY` and manage passwords in the directory if you do not want users changing them through Issuerd. Non-federated users and links pointing at removed providers keep the pure local-credential behavior. Remember the AD caveat above: `unicodePwd` writes need `ldaps://` (or StartTLS).
+
+**LLDAP** accepts the generic write path (a plain `userPassword` replace from the provider's bind connection — LLDAP also offers the RFC 3062 *Password Modify* exop, which Issuerd does not need). The bound account must be authorized for the target in LLDAP terms: `lldap_admin` members can change anyone's password, `lldap_password_manager` members can change regular users' (not other admins'), and any user can change their own. One operational trap: resetting the password of the federated user who **is** the provider's bind account changes the service account's password in LLDAP, so the provider then binds with the stale configured credential until `bindCredential` is updated — prefer a dedicated bind-only service account.
 
 ### Monitoring sync results
 

@@ -644,11 +644,12 @@ operational property of the shared signing-key set plus one realm attribute.
   for clients that cannot consume Ed25519/ECDSA keys: fresh deployments
   already carry an active RS256 boot key, and additional RSA keys can be
   rotated in (`{"algorithm": "RS256", "key_size": 2048}`); pin the realm
-  attribute to `RS256` to use them. Note the `rsa` crate is used **only for
-  key generation** (signing and verification go through `ring`), which is why
-  `RUSTSEC-2023-0071` (Marvin) is ignored in `.cargo/audit.toml` /
-  `deny.toml` — issuerd performs no RSA decryption, so the padding oracle is
-  unreachable.
+  attribute to `RS256` to use them. Note on the crypto backend: RS256/384/512
+  signing runs through the FIPS-validated `aws-lc-rs` library (jsonwebtoken's
+  `aws_lc_rs` backend), and RSA key generation uses OpenSSL — the pure-Rust
+  `rsa` crate affected by `RUSTSEC-2023-0071` (Marvin; RSA private-key
+  operations incl. PKCS#1 v1.5 signing) is not in the compiled dependency
+  graph at all, so the advisory carries no ignore entry in `deny.toml`.
 - **Upgrading existing deployments.** Stored keys are never touched by an
   upgrade: an existing RS256-only key set keeps signing RS256 for
   un-configured realms (the EdDSA default finds no matching key and falls

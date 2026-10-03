@@ -218,8 +218,8 @@ fails with 400: rotate first. Suggested compromise procedure:
 1. `POST .../keys/rotate` to move signing to a fresh key.
 2. `PUT .../keys/{kid}/disable` for the compromised key.
 3. Because a passive key still validates its outstanding tokens, set each affected realm's
-   `notBefore` (`PUT /admin/realms/{realm}` — mind the
-   [full-replacement PUT semantics](#password-policies)) to now to reject tokens issued before
+   `notBefore` (`PUT /admin/realms/{realm}` — a partial PUT suffices, see the
+   [realm PUT merge semantics](#password-policies)) to now to reject tokens issued before
    the cutover — or accept them until natural expiry (default access-token lifespan is 300 s).
 
 ### Cluster propagation
@@ -264,18 +264,18 @@ at once with machine-readable codes (`min_length`, `require_digits`, …).
 
 Set the policy through the Admin API as a JSON string on the realm representation:
 
-> **Warning:** `PUT /admin/realms/{realm}` is a **full replacement**, not a merge
-> (`crates/issuerd-admin-api/src/realms.rs` — the body is converted with `Realm::default()` fallbacks
-> for omitted fields). Always GET the current representation, edit it, and PUT it back, or you
-> will silently reset lifespans, events config, and every other realm field to model defaults:
+> **Note:** `PUT /admin/realms/{realm}` **merges by default** — omitted (or null) fields keep
+> their stored values, so a partial body is safe. Pass `?merge=false` for full replacement
+> (omitted fields reset to model defaults); that mode is also the only way to *clear* a
+> nullable field (`loginTheme`, `browserFlow`, ...) back to unset, since merge treats an
+> explicit JSON `null` exactly like an absent field.
 
 ```bash
-# GET, modify, PUT back (jq required)
-curl -s "https://sso.example.com/admin/realms/myrealm" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" |
-  jq '.password_policy = "{\"min_length\":12,\"require_digits\":true,\"require_special\":true,\"not_username\":true,\"history_size\":5}"' |
-  curl -X PUT "https://sso.example.com/admin/realms/myrealm" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d @-
+# Partial PUT — only the password policy is touched, the rest of the realm
+# configuration (lifespans, brute-force protection, events) is left as-is.
+curl -X PUT "https://sso.example.com/admin/realms/myrealm" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"realm":"myrealm","password_policy":"{\"min_length\":12,\"require_digits\":true,\"require_special\":true,\"not_username\":true,\"history_size\":5}"}'
 ```
 
 ### Password history
@@ -308,15 +308,13 @@ realm (`crates/issuerd-core/src/models.rs`, Admin API field names in parentheses
 | `lockout_duration_secs` (`lockoutDurationSecs`) | `900` | Fixed lockout duration when the increment is `0` |
 
 Enable it on every production realm, at minimum on realms with the password grant or
-browser-password login (remember the [full-replacement PUT semantics](#password-policies) —
-GET, edit, PUT back):
+browser-password login (a partial PUT suffices — the realm PUT
+[merges by default](#password-policies) and leaves every other setting untouched):
 
 ```bash
-curl -s "https://sso.example.com/admin/realms/myrealm" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" |
-  jq '.bruteForceProtected = true | .maxLoginFailures = 5' |
-  curl -X PUT "https://sso.example.com/admin/realms/myrealm" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d @-
+curl -X PUT "https://sso.example.com/admin/realms/myrealm" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"realm":"myrealm","bruteForceProtected":true,"maxLoginFailures":5}'
 ```
 
 ### Lockout semantics
@@ -404,6 +402,17 @@ users who own a passkey; registration happens in the account console
 (`account/api/webauthn/register/start|finish`). The relying-party id is derived from the
 `issuer_url` host and ceremony state is cached for 300 s — see the issuer warning in
 [TLS everywhere](#tls-everywhere).
+
+**`danger-allow-state-serialisation` justification.** The build enables webauthn-rs's
+`danger-` feature that unlocks serde on the in-ceremony state types — flagged "danger" because
+persisting ceremony state is unsafe when stored client-side or reused. Issuerd uses it only
+in the intended server-side pattern: the ceremony state is serialized **only into the
+server-side distributed cache** (never sent to the client), is **single-use** (consumed with an
+atomic `get_and_delete` when the ceremony finishes, whether it succeeds or fails), and expires
+after 300 s. Serialization is required for horizontal scaling: the request finishing a ceremony
+may land on a different node than the one that started it, so the state must live in shared
+storage (Redis) — the same model Keycloak uses for WebAuthn state in the authentication
+session.
 
 ### Passwordless email-code realms
 
