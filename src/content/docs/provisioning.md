@@ -205,6 +205,9 @@ nonexistent realm aborts the run with `realm '<name>' not found`.
 | `login_theme` | string | none | Login theme name (from the `[themes] dir` directory). |
 | `email_theme` | string | none | Email theme name. |
 | `admin_theme` | string | none | Admin console theme name. |
+| `internationalization_enabled` | bool | `false` | Enable localized login-flow pages and email for the realm. |
+| `supported_locales` | list of strings | `[]` | BCP 47 locale tags the realm can render; empty = unrestricted. Locales beyond the compiled-in `en`/`de` need a theme bundle (`{themes.dir}/{theme}/messages_<locale>.json` — see [configuration — Localization](/configuration/#localization-message-bundles)). |
+| `default_locale` | string | none | Fallback locale when the client does not negotiate one (then `en`). |
 | `default_role` | string | none | Name of a realm role automatically assigned to users on self-registration and first broker login. Stored verbatim; not validated at provision time — declare the role in `roles:`. |
 | `access_token_lifespan` | seconds | `300` | Must be non-zero; `0` is rejected with an error. |
 | `refresh_token_lifespan` | seconds | `1800` | Must be non-zero. |

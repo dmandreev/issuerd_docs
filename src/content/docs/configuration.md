@@ -558,7 +558,58 @@ built-in default theme at `themes/issuerd`.
   from the built-in `issuerd` theme, so a custom theme only ships the files
   it overrides (e.g. just `login.css`).
 - A theme may also carry `messages_{locale}.json` bundles that merge over the
-  built-in login/email translations.
+  built-in login/email translations — see the next section.
+
+### Localization (message bundles)
+
+Every server-rendered login-flow page — the login challenges (TOTP, email
+code, WebAuthn/passkey), the CONFIGURE_TOTP enrollment, the required-action
+pages (UPDATE_PASSWORD, UPDATE_PROFILE, TERMS_AND_CONDITIONS, VERIFY_EMAIL),
+registration, reset-credentials, the broker first-login pages and the error
+pages — and every outbound email (verify-email, reset-credentials, login-code,
+execute-actions) is rendered from a flat `key → text` message bundle. Bundles
+load in **layers with per-key fallback**, so a partial custom bundle only
+overrides the keys it defines:
+
+1. built-in English (compiled in, always complete — the canonical key list is
+   the source-tree `crates/issuerd-server/i18n/messages_en.json`),
+2. built-in `{locale}` (compiled in; shipped locales: `en`, `de`),
+3. theme English override (`{themes.dir}/{theme}/messages_en.json`),
+4. theme locale override (`{themes.dir}/{theme}/messages_{locale}.json`).
+
+`theme` is the realm's `login_theme` for pages and `email_theme` for emails;
+when unset, the **default theme `issuerd`** is read, so dropping a bundle into
+`{themes.dir}/issuerd/` localizes every realm that has no theme configured —
+no realm change needed. A key missing from the resolved locale's layers keeps
+the English text.
+
+The UI locale resolves per request (Keycloak precedence): the `ui_locales`
+authorization parameter (pinned on the paused login flow) → the
+`Accept-Language` header → the realm's default locale → `en`. The whole chain
+is gated on the realm's **internationalization** toggle, and candidates are
+restricted to the realm's **supported locales** (empty = unrestricted). The
+resolved locale is not limited to the compiled-in set — theme-supplied locales
+work everywhere. Outbound email resolves the recipient's `locale` user
+attribute first, then the realm default.
+
+Enable it per realm in the admin console (**Realm Settings → Localization**;
+the locales checkboxes list the compiled-in locales plus every
+`messages_*.json` discovered under `[themes] dir` at boot — a bundle dropped
+in later renders immediately but appears in the checkbox list only after a
+server restart — the same list `GET /admin/enums/locales` and
+`GET /admin/serverinfo` expose), or via the
+Admin API / provision YAML realm keys `internationalization_enabled`,
+`supported_locales`, `default_locale` (see [provisioning.md](/provisioning/)).
+
+To add a locale, drop a `messages_<locale>.json` into a theme directory —
+e.g. `{themes.dir}/issuerd/messages_fr.json` with `{ "login.title": "Connexion" }` —
+then enable internationalization on the realm and add the locale to its
+supported locales (it appears in the console checkbox list automatically).
+Theme bundle files are plain JSON, re-read on every request, and treated as
+deployment-local content: the `[themes] dir` is data, not code, and
+`themes/*/messages_*.json` is gitignored by default. Note the admin console
+and account console SPAs remain English-only; localization covers the
+login-flow pages and outbound email.
 
 ## [smtp]
 

@@ -130,7 +130,7 @@ http://<host>:<port>/admin/console
 `Realm settings` edits the realm representation directly (`GET/PUT /admin/realms/{realm}`). The console always sends the full document with `merge=false`; API callers get merge-by-default semantics — a partial PUT applies only the fields present in the body (`?merge=false` restores full replacement, and is the only way to clear a nullable field). Tabs:
 
 - **General** — display name, enabled flag, SSL-required level, themes (login/email/admin theme dropdowns populated from the server's theme list), flow bindings, and default groups.
-- **Localization** — internationalization toggle, supported locales, default locale.
+- **Localization** — internationalization toggle, supported locales, default locale. The locales checkbox list is discovered at server boot: the compiled-in `en`/`de` plus every `messages_<locale>.json` found under `[themes] dir`, so theme-supplied locales need no server change. Localization covers all server-rendered login-flow pages and outbound email (see [configuration — Localization](/configuration/#localization-message-bundles)); the admin and account consoles themselves stay English-only.
 - **Login** — login-page behavior flags (registration, forgot-password/reset credentials, remember me, login with email, email-code login).
 - **Email** — the realm's SMTP overrides, stored as realm attributes under `smtpServer.*` (`host`, `port`, `from`, `fromDisplayName`, `replyTo`, `user`, `password`, `starttls`, `ssl`). These override the global `[smtp]` configuration for this realm only; sending stays gated on the global `smtp.enabled = true` (see [configuration](/configuration/)). A **Test Connection** box sends a real test mail through the resolved configuration (`POST .../test-smtp-connection`).
 - **Tokens** — access/refresh token lifespans, SSO session idle/max, offline session idle, default signature algorithm.
@@ -245,7 +245,7 @@ The `{realm}` path segment is always the realm **name**, never the UUID. The `{i
 
 ### Authentication and authorization
 
-`Authorization: Bearer <access_token>` on every call. Missing/invalid token → `401`; token bound to another realm, realm-less path without a master token, or missing required role → `403`. Role requirements by area (reads accept view- or manage-; writes require manage-):
+`Authorization: Bearer <access_token>` on every call. Missing/invalid token → `401`; token bound to another realm, realm-less path without a master token (except the server-global metadata reads `GET /admin/serverinfo` and `GET /admin/enums/*`, which any authenticated admin token may use), or missing required role → `403`. Role requirements by area (reads accept view- or manage-; writes require manage-):
 
 | Area | Read roles | Write roles |
 |---|---|---|
