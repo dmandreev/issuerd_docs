@@ -142,6 +142,14 @@ TOML).
 > (id-spelled issuers are rejected), so users must re-authenticate. Perform a
 > full restart of all nodes rather than a rolling upgrade for that transition.
 
+> **Rolling-upgrade note (discovery document):** the rendered discovery
+> document is cached in Redis (`discovery-resp:{realm}`, TTL
+> `[cache] read_cache_ttl_secs`, default 60 s) and validated against the realm
+> content hash plus the keyset generation — not the server version. During a
+> rolling upgrade that changes the discovery document (new endpoints/features),
+> old and new nodes may serve slightly different documents for up to one TTL
+> window. Bounded and self-healing; no action needed.
+
 ## Load balancer requirements
 
 - **No sticky sessions** — round-robin / least-conn are both fine.

@@ -27,6 +27,7 @@ implemented in `crates/issuerd-server/src/config.rs` and the daemon startup path
 - [[oauth]](#oauth)
 - [[dpop]](#dpop)
 - [[crypto.key_encryption]](#cryptokey_encryption)
+- [[outbound_http]](#outbound_http)
 - [[themes]](#themes)
 - [[smtp]](#smtp)
 - [Token signing algorithm](#token-signing-algorithm)
@@ -541,6 +542,27 @@ Environment equivalents: `ISSUERD_CRYPTO__KEY_ENCRYPTION__KEY_ID` and
   the internal copies `ring`/`jsonwebtoken` make per sign call — the guarantee
   is "no additional long-lived plaintext copies beyond the resident key".
 
+## [outbound_http]
+
+Trust roots for **outbound** HTTPS calls. Issuerd talks to other servers when
+it fetches identity-provider metadata and JWKS documents, client `jwks_url`
+documents and pairwise `sector_identifier_uri` documents, and when it delivers
+back-channel logout notifications. All of these ride reqwest/rustls with the
+public webpki root store; a deployment behind a private CA (corporate TLS
+inspection, an internal CA, a hermetic test rig) adds its roots here.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `extra_ca_bundle` | path | unset | PEM file with additional root CA certificates (the file may hold several). **Additive** to the public roots. A missing file, unparseable content, or a bundle with zero valid certificates aborts the boot — fail closed, so a typo never silently falls back to public roots only. |
+| `allow_private_addresses` | bool | `false` | **Test rigs only.** Lifts the public-IP check of the SSRF-guarded outbound fetches (client `jwks_url` documents, pairwise `sector_identifier_uri` documents, JAR-by-reference `request_uri` objects), so they may dial private/loopback/link-local addresses — e.g. the hermetic OIDC conformance network. The https-only scheme check, the no-redirect policy, the body-size cap, and the timeout stay enforced. **Never enable in production**: that check is what keeps those attacker-influenced URLs from probing the internal network. |
+
+```toml
+[outbound_http]
+extra_ca_bundle = "/etc/issuerd/corp-root-ca.pem"
+```
+
+Environment equivalent: `ISSUERD_OUTBOUND_HTTP__EXTRA_CA_BUNDLE` (and `ISSUERD_OUTBOUND_HTTP__ALLOW_PRIVATE_ADDRESSES` for the test-rig flag).
+
 ## [themes]
 
 | Key | Type | Default |
@@ -556,7 +578,10 @@ built-in default theme at `themes/issuerd`.
   directory; assets are served at `/realms/{realm}/theme/{path}`.
 - Fallback is per file: anything a custom theme does not provide is served
   from the built-in `issuerd` theme, so a custom theme only ships the files
-  it overrides (e.g. just `login.css`).
+  it overrides (e.g. just `login.css`). The default theme's `login.css` is
+  also compiled into the binary, so deployments without a mounted themes
+  directory (the container image, `cargo install`) still serve it; a
+  `{themes.dir}/issuerd/login.css` on disk takes precedence when present.
 - A theme may also carry `messages_{locale}.json` bundles that merge over the
   built-in login/email translations — see the next section.
 
@@ -573,9 +598,14 @@ overrides the keys it defines:
 
 1. built-in English (compiled in, always complete — the canonical key list is
    the source-tree `crates/issuerd-server/i18n/messages_en.json`),
-2. built-in `{locale}` (compiled in; shipped locales: `en`, `de`),
+2. built-in `{locale}` (compiled in; shipped locales: `en`, `de`, `zh` — the
+   `zh` bundle is Simplified-script Chinese and serves every `zh-*` region),
 3. theme English override (`{themes.dir}/{theme}/messages_en.json`),
-4. theme locale override (`{themes.dir}/{theme}/messages_{locale}.json`).
+4. theme locale override (`{themes.dir}/{theme}/messages_{locale}.json`),
+5. theme full-tag override (`messages_{locale-with-region}.json`, e.g.
+   `messages_de-AT.json`) — when the resolved locale carries region/script
+   subtags, its full tag layers over the primary subtag (Keycloak's lookup
+   order), so a regional variant only ships the keys it refines.
 
 `theme` is the realm's `login_theme` for pages and `email_theme` for emails;
 when unset, the **default theme `issuerd`** is read, so dropping a bundle into
@@ -605,6 +635,10 @@ To add a locale, drop a `messages_<locale>.json` into a theme directory —
 e.g. `{themes.dir}/issuerd/messages_fr.json` with `{ "login.title": "Connexion" }` —
 then enable internationalization on the realm and add the locale to its
 supported locales (it appears in the console checkbox list automatically).
+To refine a locale for one region, add a full-tag bundle next to it —
+`messages_de-AT.json` overrides `messages_de.json` per key for `de-AT`
+requests only, and regional file names surface in the locale lists under
+their full tag.
 Theme bundle files are plain JSON, re-read on every request, and treated as
 deployment-local content: the `[themes] dir` is data, not code, and
 `themes/*/messages_*.json` is gitignored by default. Note the admin console
@@ -803,6 +837,13 @@ lifetime_secs = 30              # single-use nonce TTL; 5-300
 # [[crypto.key_encryption.previous_keys]]   # retired KEKs, decrypt-only (rotation window)
 # key_id     = "kek-2025-01"
 # key_base64 = "..."
+
+# ---- Outbound HTTP ----------------------------------------------------------
+# Omitted = outbound HTTPS (IdP/JWKS/sector fetches, back-channel logout)
+# trusts the public webpki roots only. Add a bundle for private-CA endpoints;
+# a bad path/empty bundle aborts the boot.
+# [outbound_http]
+# extra_ca_bundle = "certs/corp-root-ca.pem"   # PEM file, may hold several roots
 
 # ---- Themes -----------------------------------------------------------------
 [themes]
