@@ -191,7 +191,7 @@ If login or token throughput is the complaint, start from the baseline rather th
 ## Still stuck
 
 - **Check whether the behavior is an intentional Keycloak divergence.** [tests/KEYCLOAK_DIFFS.md](https://github.com/issuerd/issuerd/blob/main/tests/KEYCLOAK_DIFFS.md) records every known behavioral difference from Keycloak 24 with its rationale — including the ones operators actually trip over: `400` vs `401` for `invalid_client` (#1), the JSON 401 body on UserInfo (#3), logout status codes (#4), and the smaller built-in client-scope set. If Keycloak behaves differently, that document tells you whether it is deliberate.
-- **Check the conformance evidence.** Issuerd passes the OIDC conformance suite (Config OP, Basic OP, Form Post OP, 0 failures) — results live under `tests/conformance/`. A client that fails against a conformant profile usually has a client-side bug; a failure that the suite covers is a strong bug report.
+- **Check the conformance evidence.** Issuerd passes the official OpenID Foundation conformance suite (release v5.3.2) across the full OP certification matrix — Basic, Implicit, Hybrid, Config, Dynamic, Form Post, and 3rd-Party-Init OP, plus all four logout profiles — with 0 failures and 0 unexpected warnings (31,000+ conditions per run); results live under `tests/conformance/`. A client that fails against a conformant profile usually has a client-side bug; a failure that the suite covers is a strong bug report.
 - **File a useful bug report.** Include:
   1. The exact version (`issuerd --version`).
   2. The configuration **minus secrets** (redact DB URLs, SMTP passwords, client secrets) — plus how it is deployed (binary, container, compose stack) and which storage/cache backends are active.
