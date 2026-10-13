@@ -22,6 +22,7 @@ export default defineConfig({
         replacesTitle: true,
       },
       favicon: '/favicon.ico',
+      customCss: ['./src/styles/custom.css'],
       // Social preview card (Telegram/Twitter/Slack link unfurls). Starlight
       // already emits og:title/description/url and twitter:card per page;
       // these add the shared image. Regenerate with `npm run generate-social-card`.

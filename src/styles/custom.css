@@ -1,0 +1,14 @@
+/* Landing page card accents: Starlight rotates card icon colors by
+   nth-child (orange/purple/green/red/blue). Swap the first card
+   (Conformance, check icon) and the third (Fast and small, rocket) so
+   the check reads green and the rocket reads orange. Unlayered custom
+   CSS wins over Starlight's `starlight.components` layer. */
+.card-grid > .card:nth-child(4n + 1) {
+  --sl-card-border: var(--sl-color-green);
+  --sl-card-bg: var(--sl-color-green-low);
+}
+
+.card-grid > .card:nth-child(4n + 3) {
+  --sl-card-border: var(--sl-color-orange);
+  --sl-card-bg: var(--sl-color-orange-low);
+}
