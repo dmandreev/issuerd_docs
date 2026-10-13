@@ -397,7 +397,9 @@ Users can also self-enroll in the account console
 ### WebAuthn / passkeys
 
 WebAuthn is supported as a **second factor only** (`crates/issuerd-auth-flow/src/webauthn.rs`;
-passwordless username-less login is out of scope). The `auth-webauthn` authenticator challenges
+passwordless username-less login is out of scope). Passkeys are phishing-resistant credentials:
+the private key never leaves the authenticator, and the ceremony is bound to the relying-party
+origin, so a lookalike phishing site cannot replay the assertion. The `auth-webauthn` authenticator challenges
 users who own a passkey; registration happens in the account console
 (`account/api/webauthn/register/start|finish`). The relying-party id is derived from the
 `issuer_url` host and ceremony state is cached for 300 s — see the issuer warning in

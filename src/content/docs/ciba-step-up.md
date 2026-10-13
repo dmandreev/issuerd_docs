@@ -22,7 +22,7 @@ Least privilege is not only about what a token *can* do — it is about *when* t
 - The user approves or denies, with the action spelled out in a **binding message** they actually read — not a generic consent screen.
 - Only then does a token carrying `refunds:execute` come into existence: a short lifetime (the realm's access-token lifespan, 300 s by default), bound to the agent's DPoP key, usable for exactly the approved action.
 
-This is CIBA's consumption-device/authorization-device split applied to agents: the agent is the consumption device, the user's browser session is the authorization device, and the binding message is the contract between them.
+This is CIBA's consumption-device/authorization-device split applied to agents: the agent is the consumption device, the user's browser session is the authorization device, and the binding message is the contract between them. It is also the practical shape of the human-in-the-loop (HITL) control that agent governance frameworks require for high-risk operations — with the important property that approval is gated by deterministic policy (the privileged scope simply does not exist before approval), not by the agent's own judgment about when to ask.
 
 ## Issuerd's CIBA at a glance
 
