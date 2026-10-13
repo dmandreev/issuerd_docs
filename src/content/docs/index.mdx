@@ -28,6 +28,11 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 ## Why issuerd
 
+issuerd is an identity control plane for the agentic era: it governs human and
+non-human identities alike — users, services, workloads and AI agents — with
+least-privilege, short-lived, sender-constrained tokens and phishing-resistant
+authentication by default.
+
 <CardGrid stagger>
   <Card title="Conformance-tested OIDC/OAuth2" icon="approve-check-circle">
     Verified with the official OpenID Foundation conformance suite (release v5.3.2):
@@ -55,12 +60,15 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
   </Card>
   <Card title="Built for AI agents" icon="star">
     First-class support for agentic workloads: DPoP sender-constrained tokens,
-    RFC 8693 token exchange with per-call audience/scope attenuation, and CIBA
-    human step-up approval — with end-to-end MCP guides and recorded demos.
+    RFC 8693 token exchange with per-call audience/scope attenuation — scoped
+    credentials per tool call — and CIBA step-up approval that keeps a
+    human-in-the-loop (HITL) over high-risk operations. End-to-end MCP guides
+    and recorded demos included.
   </Card>
   <Card title="Federation &amp; MFA included" icon="padlock">
     LDAP, Active Directory, and Kerberos/SPNEGO user federation; identity brokering
-    with Google, GitHub, and Microsoft; TOTP, WebAuthn/passkeys, and email-code
+    with Google, GitHub, and Microsoft; TOTP, WebAuthn/passkeys for
+    phishing-resistant MFA, and email-code
     login. No enterprise edition — everything is in the open repository.
   </Card>
 </CardGrid>
