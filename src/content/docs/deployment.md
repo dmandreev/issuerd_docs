@@ -28,7 +28,7 @@ With no `[storage]` section the daemon uses the in-memory backend; `[storage.jso
 The baseline production topology is one Issuerd node with:
 
 - **PostgreSQL** for all durable state (`[storage.postgres]`). Signing keys live in the shared `signing_keys` table, so tokens and sessions survive restarts and redeploys. Schema migrations run automatically at boot.
-- **Redis** for transient state (`redis = "redis://…"`). Redis is ephemeral by design: wiping it loses in-flight login flows (users retry) and blocklist entries for tokens that would expire anyway; issued JWTs and sessions are unaffected. The demo and cluster compose stacks run it with `--maxmemory 256mb --maxmemory-policy allkeys-lru` and no persistence; the integration stack enables `--appendonly yes` with a volume.
+- **Redis** for transient state (`redis = "redis://…"`). The shipped demo and cluster stacks use `--maxmemory 256mb --maxmemory-policy noeviction`, so revocation, rotation, replay, and lockout markers are never silently evicted under memory pressure; security-critical writes fail closed instead. The integration stack enables `--appendonly yes` with a volume. A Redis wipe still drops revocation entries and in-flight flows, so use the durable realm `notBefore` cutoff when revocation must survive it.
 
 > **Warning:** With PostgreSQL storage the automatic master-realm bootstrap does **not** run. A fresh deployment must define the `master` realm in a provision file (as `examples/provision.demo.yaml` does) or apply one with `issuerd provision --file …` — otherwise there is no admin user. See [provisioning.md](/provisioning/).
 
@@ -78,7 +78,7 @@ docker compose down -v         # stop AND wipe the volume (next start re-seeds)
 |---|---|---|---|
 | `issuerd` | `issuerd-demo-server` | Published Docker Hub image (`issuerd/issuerd:latest`); healthcheck polls `/ready`; starts only after PostgreSQL and Redis are healthy | `http://localhost:8080` |
 | `postgres` | `issuerd-demo-postgres` | PostgreSQL 15 Alpine, state in the `postgres-data` volume | internal only (no host port) |
-| `redis` | `issuerd-demo-redis` | Redis 7 Alpine, `--maxmemory 256mb --maxmemory-policy allkeys-lru`, no persistence | internal only (no host port) |
+| `redis` | `issuerd-demo-redis` | Redis 7 Alpine, `--maxmemory 256mb --maxmemory-policy noeviction`, no persistence | internal only (no host port) |
 
 The server container mounts `examples/issuerd.demo.toml` → `/etc/issuerd/issuerd.toml` and `examples/provision.demo.yaml` → `/etc/issuerd/provision.yaml`. On first start against an empty database the provision file runs exactly once and seeds the `master` realm (`admin`/`admin`), the `myrealm` demo realm (`alice`/`changeme`, groups `developers`/`ops`), the console clients (`admin-cli`, `account-console`), and the sample clients `my-app` (confidential, secret `my-app-secret`) and `public-app` (public, PKCE).
 

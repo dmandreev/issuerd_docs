@@ -12,7 +12,7 @@ export default defineConfig({
       plugins: [starlightLlmTools()],
       title: 'issuerd',
       description:
-        'Identity & Access Management in Rust — conformance-tested OIDC/OAuth2, Keycloak-compatible, horizontally scalable, shipped as a single binary.',
+        'Identity & Access Management in Rust — OpenID Certified OIDC/OAuth2, Keycloak-compatible, horizontally scalable, shipped as a single binary.',
       logo: {
         alt: 'issuerd',
         // shown in light mode (dark-coloured artwork)

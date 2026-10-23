@@ -113,7 +113,7 @@ cd webclientsrc && npm ci && npm run generate-api && npm run build && cd ..
 cargo run --bin issuerd -- daemon
 ```
 
-The server listens on `http://localhost:8080` and seeds the `master` realm (admin/admin) plus the `myrealm` demo content (alice/changeme, sample clients). For a production-style artifact, `cargo build --bin issuerd --release` produces the standalone binary at `target/release/issuerd`.
+The server listens on `http://localhost:8080` and seeds the `master` realm (admin/admin — the root `issuerd.toml` pins `bootstrap_admin_password = "admin"` for this loopback-only rig) plus the `myrealm` demo content (alice/changeme, sample clients). For a production-style artifact, `cargo build --bin issuerd --release` produces the standalone binary at `target/release/issuerd`.
 
 The checked-in root `issuerd.toml` is a zero-dependency development rig:
 
@@ -122,6 +122,7 @@ bind = "127.0.0.1"
 port = 8080
 issuer_url = "http://localhost:8080"
 provision = "examples/provision.example.yaml"   # adds myrealm, alice, sample clients
+bootstrap_admin_password = "admin"              # dev rig only; unset ⇒ random, printed once
 # no [storage] section  → in-memory backend (state is lost on restart)
 # no [tls] section      → plain HTTP
 ```
@@ -175,7 +176,7 @@ Knowing what the server does on its first start saves confusion later. All of th
 
 If (and only if) the storage backend is `in-memory` or `json-file` **and** no realms exist yet, the server creates the `master` realm with:
 
-- user `admin` / `admin` (Argon2id-hashed),
+- user `admin` (Argon2id-hashed) whose password is `bootstrap_admin_password` (config key, or the `ISSUERD_BOOTSTRAP_ADMIN_PASSWORD` environment variable); when that is unset or empty a random password is generated and printed **once** to stderr — read it from the console (or `docker logs`) on first boot,
 - the realm-management roles `manage-realm`, `view-realm`, `manage-users`, `view-users`, `manage-clients`, `view-clients`, `impersonation`, all assigned to `admin`,
 - the built-in public clients `admin-cli` and `account-console`, with redirect URIs derived from the configured `issuer_url`.
 
@@ -243,7 +244,7 @@ curl -s -X POST http://localhost:8080/realms/myrealm/protocol/openid-connect/tok
   -d "scope=openid profile"
 ```
 
-**Against any fresh install** (public client `admin-cli` in the auto-created `master` realm — no secret needed; this is the same request shape the E2E test suite uses):
+**Against any fresh install** (public client `admin-cli` in the auto-created `master` realm — no secret needed; this is the same request shape the E2E test suite uses; replace `password=admin` with the generated bootstrap password unless you pinned `admin`):
 
 ```bash
 curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \
@@ -286,7 +287,7 @@ Typical failure causes: a wrong password yields `401 {"error":"invalid_grant"}`;
 
 Before the server leaves your laptop, in rough order of urgency (details in [security.md](/security/) and [deployment.md](/deployment/)):
 
-1. **Change the `admin` password** — admin console → Users → `admin` → Credentials, or sign into `http://localhost:8080/realms/master/account` as `admin`. The `admin`/`admin` default is public knowledge.
+1. **Change the `admin` password** — admin console → Users → `admin` → Credentials, or sign into `http://localhost:8080/realms/master/account` as `admin`. The `admin`/`admin` credentials of the dev rig and the demo stacks are public knowledge, and a generated bootstrap password has been printed to the console.
 2. **Remove or re-secret the demo content** — `alice`/`changeme` and `my-app-secret` are checked into the repository. Delete the demo realm/clients or provision your own instead.
 3. **Set `issuer_url` to the public base URL** of the deployment (e.g. `https://id.example.com`). It is baked into the `iss` claim and the discovery document, so it must match how clients reach the server *before* they integrate; changing it later changes the issuer of all realms.
 4. **Turn on TLS** — either the built-in `[tls]` section (`cert_path`/`key_path`) or a TLS-terminating reverse proxy in front; plain HTTP is for local evaluation only.

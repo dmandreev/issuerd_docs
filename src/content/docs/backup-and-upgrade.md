@@ -54,6 +54,7 @@ All Redis content is short-lived runtime state. The key prefixes below are defin
 | `dpop_jti:{realm}:{jti}` | DPoP proof single-use markers | Proof acceptance window |
 | `dpop-nonce:{realm}:{nonce}` | Server-provided DPoP nonces (opt-in `[dpop.nonce]`; single-use, consumed on verification) | `[dpop.nonce] lifetime_secs` (default 30 s) |
 | `email-code:{realm}:{user_id}` | Passwordless email-login codes | Code lifetime |
+| `email-code-attempts:{realm}:{user_id}:{nonce}`, `email-code-sends:{realm}:{user_id}`, `email-code-attempts-ip:{realm}:{user_id}:{ip}`, `email-code-sends-ip:{realm}:{user_id}:{ip}` | Atomic email-code verification and send counters (per code, user, and source IP) | 5 × code TTL (attempts) / code TTL (sends), fixed at creation |
 | `webauthn-reg:{realm}:{user_id}`, `totp-enroll:{realm}:{user_id}` | In-flight passkey registration ceremonies and unverified TOTP enrollment secrets | Ceremony/enrollment lifetime |
 | `broker_state:`, `broker_fbl:` | Identity-brokering SSO state and first-broker-login flows | 600 s |
 | `broker_meta:`, `broker_jwks:` | Cached external-IdP discovery documents and JWKS | Cache lifetime |
@@ -71,7 +72,7 @@ All Redis content is short-lived runtime state. The key prefixes below are defin
 - Login-failure counters — brute-force lockouts reset.
 - Registration access tokens of dynamically registered clients — those clients can no longer read/update/delete their own registration through the RFC 7592 endpoint.
 
-**What a Redis wipe does NOT lose:** realms, users, clients, SSO sessions (refresh tokens keep working), issued JWTs (validated statelessly), signing keys, audit events. The demo stack exploits this by running Redis with `--maxmemory-policy allkeys-lru` and no persistence (`docker-compose.yml`).
+**What a Redis wipe does NOT lose:** realms, users, clients, SSO sessions (refresh tokens keep working), issued JWTs (validated statelessly), signing keys, audit events. The demo stack runs Redis with `--maxmemory-policy noeviction` and no persistence (`docker-compose.yml`), so these entries cannot be evicted selectively under memory pressure; security-critical writes fail closed when the cap is reached.
 
 > **Warning:** because single-token revocation entries are lost on a Redis wipe, use the realm-wide `notBefore` cutoff when a revocation must survive a cache flush — set it with `PUT /admin/realms/{realm}` (tokens issued before the cutoff are rejected). The cutoff itself is durable realm state in PostgreSQL.
 

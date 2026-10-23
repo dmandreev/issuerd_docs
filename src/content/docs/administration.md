@@ -110,10 +110,11 @@ The endpoint verifies the password against the realm's `admin-cli` client, creat
 ### Token properties
 
 - The token is a **bearer token** for all `/admin/...` endpoints: `Authorization: Bearer <access_token>`.
+- It must be issued to `admin-cli`, or to a custom client whose attributes contain `admin_api_access = "true"`. Only a caller with `manage-realm` may set or change that attribute through the Admin API (the endpoint still requires `manage-clients`); open dynamic registration strips it. Tokens from ordinary relying parties are rejected even when they carry admin roles.
 - Lifetime is the issuing realm's `access_token_lifespan` — **300 seconds by default** (`expires_in` in the response tells you the effective value). Scripted workflows should re-fetch the token per run rather than cache it; interactive API users can raise the lifetime on the realm (Tokens tab, or `access_token_lifespan` in the realm representation — that representation mixes snake_case defaults with selective camelCase renames, and this field keeps the snake_case name).
 - Admin sessions are real user sessions: they appear under Sessions and are revoked when the session is deleted, when the user logs out, or when `notBefore` is set.
 
-> **Warning:** The demo credentials (`admin`/`admin` on the in-memory/json bootstrap and the Docker demo stack) are well-known. Change the master admin password before the server is reachable by anyone else — see [getting started](/getting-started/#first-hardening-steps) and [security](/security/).
+> **Warning:** The demo credentials (`admin`/`admin` on the root `issuerd.toml` dev rig and the Docker demo stack) are well-known. Without `bootstrap_admin_password` the in-memory/json bootstrap generates a random admin password and prints it once to stderr. Change the master admin password before the server is reachable by anyone else — see [getting started](/getting-started/#first-hardening-steps) and [security](/security/).
 
 ## The admin console
 
@@ -160,7 +161,7 @@ The client list (`GET .../clients`) leads to the client editor with tabs:
 - **Client Scopes** — scope assignments (`.../default-client-scopes`, `.../optional-client-scopes`).
 - **Scope Mappings** — role scope mappings (`.../clients/{id}/scope-mappings/...`).
 
-Enabling **service accounts** provisions the backing `service-account-{client_id}` user immediately; `GET .../clients/{id}/service-account-user` returns it (creating it lazily if needed) so you can assign roles to it. Client create/update/delete requires `manage-clients`.
+Enabling **service accounts** provisions the backing user immediately; `GET .../clients/{id}/service-account-user` returns it (creating it lazily if needed) so you can assign roles to it. Resolution uses a deterministic client-UUID-bound user id and a reserved back-link attribute, never the `service-account-{client_id}` username alone; if that conventional name is occupied, the linked account uses `service-account-{client_uuid}` instead. Once the linked account exists, an unlinked legacy account occupying the conventional name is disabled rather than adopted, and its roles are not copied. Review that account and reassign any intended roles to the linked account once after upgrading. The Admin API does not allow an unlinked `service-account-*` account to be enabled. Client create/update/delete requires `manage-clients`.
 
 `clients-initial-access` endpoints (`GET/POST/DELETE .../clients-initial-access[/{id}]`) mint the initial-access tokens consumed by dynamic client registration — see [client integration](/client-integration/).
 
@@ -471,7 +472,7 @@ Strategy: `FAIL` (default — first conflict aborts with **409** and previously 
 curl -s -X POST "$IC/admin/realms/acme/export" -H "Authorization: Bearer $TOKEN" > acme-export.json
 ```
 
-The export document contains the realm fields plus users, clients, groups, roles, identity providers, and client scopes — with **no secret material** (user credentials absent, client secrets omitted, IdP `clientSecret` masked as `**********`). It is a backup/inspection artifact, not a round-trip import format; for lifecycle backups see [backup and upgrade](/backup-and-upgrade/).
+The export document contains the realm fields plus users, clients, groups, roles, identity providers, and client scopes — with **no secret material** (user credentials absent, client secrets omitted, IdP `clientSecret` masked as `**********`, `bindCredential` too for callers without `manage-realm`). It is a backup/inspection artifact, not a round-trip import format; for lifecycle backups see [backup and upgrade](/backup-and-upgrade/).
 
 ### Read and update the events configuration
 

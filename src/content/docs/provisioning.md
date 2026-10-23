@@ -464,7 +464,9 @@ The automatic master-realm bootstrap (`bootstrap_master_realm` in
 `crates/issuerd-server/src/state.rs`) runs at daemon startup **only** when the storage
 backend is in-memory or JSON-file **and** no realms exist yet. It creates:
 
-- the `master` realm with user `admin` / password `admin`,
+- the `master` realm with user `admin`, password `bootstrap_admin_password` from the
+  server config (or `ISSUERD_BOOTSTRAP_ADMIN_PASSWORD`) — unset or empty ⇒ a random
+  password printed once to stderr,
 - the realm-management roles (`manage-realm`, `view-realm`, `manage-users`,
   `view-users`, `manage-clients`, `view-clients`, `impersonation`) assigned to
   `admin`,

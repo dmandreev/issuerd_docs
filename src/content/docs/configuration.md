@@ -68,6 +68,7 @@ Configuration is assembled from three layers, later layers winning:
    | `ISSUERD_DPOP__NONCE__MODE=required` | `dpop.nonce.mode` |
    | `ISSUERD_SMTP__ENABLED=true` / `ISSUERD_SMTP__HOST=mail.example.com` | `smtp.enabled` / `smtp.host` |
    | `ISSUERD_PROXY__TRUST_X_FORWARDED_FOR=false` | `proxy.trust_x_forwarded_for` |
+   | `ISSUERD_BOOTSTRAP_ADMIN_PASSWORD=...` | `bootstrap_admin_password` |
 
    The shipped cluster stack uses this mechanism for per-node identity
    (`ISSUERD_CLUSTER__NODE_ID` in `docker-compose.cluster.yml`), so the same
@@ -104,8 +105,9 @@ issuer_url = "http://localhost:8080"
 
 The root `issuerd.toml` in the repository is a working example of this rig.
 With in-memory (or JSON-file) storage the `master` realm is bootstrapped
-automatically on first start (admin user `admin`/`admin`); see
-[getting-started.md](/getting-started/).
+automatically on first start (admin user `admin`, password from
+`bootstrap_admin_password` or randomly generated and printed once to stderr;
+the root rig pins `admin`/`admin`); see [getting-started.md](/getting-started/).
 
 **Production (PostgreSQL + Redis, TLS terminated at a proxy):**
 
@@ -137,6 +139,7 @@ define `master` in a provision file (see `examples/provision.demo.yaml` and
 | `issuer_url` | string (URL) | `"http://localhost:8080"` | Public base URL of this server. See the deep-dive below. |
 | `redis` | string (URL), optional | unset | Single Redis node, e.g. `"redis://localhost:6379"` (`rediss://` for TLS). Unset ⇒ in-process ephemeral cache. Overridden by `cluster.redis_nodes` when that list is non-empty. |
 | `provision` | path, optional | unset | Provision file (YAML/TOML/JSON by extension) applied **exactly once** at startup — a marker is claimed in storage before applying, so restarts and concurrent first boots skip it. Relative paths resolve against the working directory. A missing/unreadable file logs an error and boot continues. Format: [provisioning.md](/provisioning/). |
+| `bootstrap_admin_password` | string, optional | unset | Password of the `admin` user the in-memory/JSON-file first-boot bootstrap seeds into the `master` realm (only when no realm exists yet). Unset or empty ⇒ a random password is generated and printed **once** to stderr (not through the log output). Prefer the `ISSUERD_BOOTSTRAP_ADMIN_PASSWORD` environment variable over writing it into the file; environment values are parsed like TOML values, so quote one that would read as a number, boolean, or array (`ISSUERD_BOOTSTRAP_ADMIN_PASSWORD='"12345"'`) — unquoted, it fails the boot with `config load failed`. Ignored by PostgreSQL storage, which has no automatic bootstrap. |
 
 ### About `issuer_url`
 
@@ -555,13 +558,14 @@ inspection, an internal CA, a hermetic test rig) adds its roots here.
 |---|---|---|---|
 | `extra_ca_bundle` | path | unset | PEM file with additional root CA certificates (the file may hold several). **Additive** to the public roots. A missing file, unparseable content, or a bundle with zero valid certificates aborts the boot — fail closed, so a typo never silently falls back to public roots only. |
 | `allow_private_addresses` | bool | `false` | **Test rigs only.** Lifts the public-IP check of the SSRF-guarded outbound fetches (client `jwks_url` documents, pairwise `sector_identifier_uri` documents, JAR-by-reference `request_uri` objects), so they may dial private/loopback/link-local addresses — e.g. the hermetic OIDC conformance network. The https-only scheme check, the no-redirect policy, the body-size cap, and the timeout stay enforced. **Never enable in production**: that check is what keeps those attacker-influenced URLs from probing the internal network. |
+| `allow_private_identity_providers` | bool | `false` | **Breaking default — set it for an IdP on the internal network.** By default the identity-broker calls — discovery, JWKS, token, userinfo, and the admin `test-connection` probe — only dial publicly routable addresses: every address a hostname resolves to, and every redirect hop, is checked (an IdP address that is private, loopback, link-local, CGNAT or otherwise non-public is refused as "identity provider unreachable"), so an admin who can configure an identity provider (`manage-realm` in any realm, master included) cannot aim server-side requests at the internal network. `http` and `https` IdPs both work, and redirects between public hosts are followed. When an outbound proxy is set through `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`, the IdP host is resolved and checked locally before the proxied request (it must resolve on this host) and only same-host redirects are followed; without such variables, IdP calls do not use OS-configured proxies. Set `true` (internal Keycloak/ADFS, Keycloak in Docker, a `localhost` dev IdP) to restore the unrestricted behaviour — enabling it hands that reach back to every such admin. Responses are capped at 1 MiB in both modes. Independent of `allow_private_addresses`. |
 
 ```toml
 [outbound_http]
 extra_ca_bundle = "/etc/issuerd/corp-root-ca.pem"
 ```
 
-Environment equivalent: `ISSUERD_OUTBOUND_HTTP__EXTRA_CA_BUNDLE` (and `ISSUERD_OUTBOUND_HTTP__ALLOW_PRIVATE_ADDRESSES` for the test-rig flag).
+Environment equivalent: `ISSUERD_OUTBOUND_HTTP__EXTRA_CA_BUNDLE`, `ISSUERD_OUTBOUND_HTTP__ALLOW_PRIVATE_IDENTITY_PROVIDERS`, and `ISSUERD_OUTBOUND_HTTP__ALLOW_PRIVATE_ADDRESSES` for the test-rig flag.
 
 ## [themes]
 
@@ -700,6 +704,13 @@ attributes named `smtpServer.*`, set via the Admin API / console (see
 
 Note the attribute names are camelCase and the credential attribute is `user`,
 not `username`. Realms without these attributes use the global config.
+
+The global `username`/`password` are inherited only while the realm's
+effective `host`, `port`, `ssl` and `starttls` all equal the global values. A
+realm that points SMTP at another host, port or TLS mode must set its own
+`smtpServer.user`/`smtpServer.password`; otherwise it connects without
+authentication, so the operator's relay credentials never reach a
+realm-chosen server.
 
 ## Token signing algorithm
 

@@ -1,10 +1,10 @@
 ---
 title: issuerd
-description: Fast, Keycloak-compatible IAM with DPoP and CIBA — OIDC conformance-tested, single binary, horizontally scalable. Free and open source under the Apache-2.0 license.
+description: Fast, Keycloak-compatible IAM with DPoP and CIBA — OpenID Certified OIDC/OAuth2, single binary, horizontally scalable. Free and open source under the Apache-2.0 license.
 template: splash
 hero:
   title: Fast IAM for humans, machines and AI agents
-  tagline: Keycloak-compatible Identity &amp; Access Management in Rust with DPoP and CIBA out of the box — conformance-tested OIDC/OAuth2, shipped as a single binary, horizontally scalable
+  tagline: Keycloak-compatible Identity &amp; Access Management in Rust with DPoP and CIBA out of the box — OpenID Certified OIDC/OAuth2, shipped as a single binary, horizontally scalable
   image:
     light: ../../assets/logo-small.svg
     dark: ../../assets/logo-small-white.svg
@@ -34,13 +34,18 @@ least-privilege, short-lived, sender-constrained tokens and phishing-resistant
 authentication by default.
 
 <CardGrid stagger>
-  <Card title="Conformance-tested OIDC/OAuth2" icon="approve-check-circle">
-    Verified with the official OpenID Foundation conformance suite (release v5.3.2):
-    the full OP certification matrix — 11 OP profiles, 43 test plans, 612 test
-    modules, 31,000+ conditions — passes with 0 failures and 0 unexpected
-    warnings. Every [release](https://github.com/issuerd/issuerd/releases)
-    ships an attested conformance report bundle. Advanced OAuth 2.1 capabilities included: PAR,
-    JAR/JARM, RAR, DPoP, CIBA, token exchange, dynamic client registration.
+  <Card title="OpenID Certified OIDC/OAuth2" icon="approve-check-circle">
+    <a href="https://openid.net/certification/certified-openid-connect-implementations/"><img src="/images/openid-certified.jpg" alt="OpenID Certified" width="160" /></a>
+
+    The official OpenID Foundation registries list **10 OP profiles on v0.1.17**
+    plus **RP-Initiated Logout OP on v0.1.19** ([OIDC](https://openid.net/certification/certified-openid-connect-implementations/),
+    [logout](https://openid.net/certification/certified-openid-providers-for-logout-profiles/)).
+    The accepted submissions used the hosted conformance suite (release v5.3.3).
+    Separately, the self-hosted release v5.3.2 engineering matrix passes 43 test
+    plans, 612 modules and 31,000+ conditions with 0 failures and 0 unexpected
+    warnings. Every [release](https://github.com/issuerd/issuerd/releases) ships
+    an attested conformance report bundle. Advanced OAuth 2.1 capabilities included:
+    PAR, JAR/JARM, RAR, DPoP, CIBA, token exchange, dynamic client registration.
   </Card>
   <Card title="Keycloak-compatible" icon="puzzle">
     The realm model, role claims (`realm_access` / `resource_access`), the Admin

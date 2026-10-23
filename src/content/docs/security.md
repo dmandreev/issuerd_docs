@@ -336,7 +336,19 @@ clears the marker. Enforcement covers the browser login flow (`auth-username-pas
 token endpoint's password grant, and the device-verification endpoint (the
 `POST /realms/{realm}/device` verify handler runs the same lockout check, failure recording, and
 reset on success, keyed per username+IP — `crates/issuerd-server/src/routes/oidc.rs`); realms without
-the toggle skip failure tracking entirely.
+the toggle skip password failure tracking entirely.
+
+**One-time codes (TOTP) are always throttled**, whatever the toggle. Every code check — the
+browser OTP stage, the password grant's `totp` parameter, and device verification — first reserves
+an attempt from one per-user budget tracked under the source slot `otp` in place of the IP
+(`login-failure:{realm}:{username}:otp` / `login-lockout:{realm}:{username}:otp`). The attempt is
+counted before the code is checked, so parallel submissions cannot outrun the threshold. With the
+toggle on, the realm's settings above apply; with it off, the defaults (5 failures, 60 s lockout
+growing to 900 s) apply. While locked, no code is checked — a correct one is refused like a wrong
+one. After a lockout expires one more code is checked, and a wrong one re-arms a longer lockout, as on
+the password path. A correct code clears the budget. A successful password check does not, since it
+resets only its own username+IP pair. The attack-detection API lists these entries with the IP
+`otp` and the "clear user" call removes them.
 
 ### Cluster-wide counters
 
@@ -429,11 +441,16 @@ email address, mails a 6-digit single-use code, and verifies it. Operational att
 | `email_code_length` | `6` | Code length in digits (max 32) |
 | `email_code_ttl_secs` | `300` | Code validity (cache-entry TTL) |
 
-Codes are single-use and burn after 5 wrong submissions; at most 5 codes are mailed per entry
-lifetime. Unknown or disabled accounts get the same challenge without a mail, so the endpoint
-does not leak account existence. SMTP must be configured (`[smtp]` or per-realm `smtpServer.*`
-attributes — see [configuration.md](/configuration/)). In these realms the "no password
-credential ⇒ UPDATE_PASSWORD" auto-rule stays silent by design.
+Codes are single-use and burn after 5 wrong submissions, counted atomically per issued code;
+concurrent correct submissions cannot both succeed, and a stale flow cannot burn or overwrite a
+reissued code. Wrong attempts do not extend the code's original TTL.
+At most 5 codes are mailed per user per fixed window of one code TTL, and burning a code does not
+reset that budget. Per-source limits allow at most 4 sends and 20 verification submissions in the
+corresponding windows, leaving a code and attempts available from another source. Unknown or
+disabled accounts get the same challenge without a mail, so the endpoint does not leak account
+existence. SMTP must be configured (`[smtp]` or per-realm `smtpServer.*` attributes — see
+[configuration.md](/configuration/)). In these realms the "no password credential ⇒
+UPDATE_PASSWORD" auto-rule stays silent by design.
 
 ### Resetting a user's MFA (recovery)
 
@@ -596,11 +613,14 @@ per-realm secret generated automatically into the realm attributes at realm crea
 Admin tokens are bound to the realm that issued them (Keycloak model): tokens issued by `master`
 administer every realm, other tokens only their own; realm creation/listing is master-only
 (`crates/issuerd-admin-api/src/auth.rs`). The automatic bootstrap of the master realm with the
-well-known `admin`/`admin` user runs **only** for the in-memory/json-file backends; on PostgreSQL
-the provision file defines the master realm (see `examples/provision.demo.yaml`).
+`admin` user runs **only** for the in-memory/json-file backends; its password is
+`bootstrap_admin_password` (`ISSUERD_BOOTSTRAP_ADMIN_PASSWORD`) or, when unset, a random one
+printed once to stderr. On PostgreSQL the provision file defines the master realm (see
+`examples/provision.demo.yaml`).
 
-- The root `docker-compose.yml` demo stack (and any in-memory/json dev rig) seeds `admin`/`admin`
-  — **never expose such a rig**. It exists for evaluation only.
+- The root `docker-compose.yml` demo stack (and the root `issuerd.toml` dev rig, which pins
+  `bootstrap_admin_password = "admin"`) seeds `admin`/`admin` — **never expose such a rig**. It
+  exists for evaluation only.
 - In production, create **named per-person admin users** with the roles they need, then disable or
   delete any shared bootstrap admin. Shared accounts destroy the value of the admin audit trail,
   which resolves `auth_username` per event.
