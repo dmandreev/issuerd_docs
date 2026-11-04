@@ -5,6 +5,8 @@ description: "How Issuerd makes AI agents safe to let loose on real APIs: every 
 
 How Issuerd makes AI agents safe to let loose on real APIs: every tool call carries a fresh, audience-narrowed, scope-attenuated token (RFC 8693) that is cryptographically bound to the agent's own key (RFC 9449 DPoP). A stolen token is worthless, an over-broad token is never minted, and a manipulated agent cannot escape its rows.
 
+> **Scope:** this guide covers an external MCP server protected by Issuerd-issued tokens. For Issuerd's built-in realm administration endpoint, see [MCP server](/mcp-server/) and [One approval, one exact operation](/mcp-exact-operation-approval/). The runnable examples and approval profiles are different and should not be presented as the same demo.
+
 - [The problem](#the-problem)
 - [The building blocks](#the-building-blocks)
 - [End-to-end flow](#end-to-end-flow)

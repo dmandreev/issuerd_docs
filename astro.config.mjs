@@ -87,9 +87,15 @@ export default defineConfig({
         {
           label: 'Agentic & MCP workloads',
           items: [
+            { slug: 'mcp-server', label: 'Built-in MCP server' },
+            { slug: 'mcp-exact-operation-approval', label: 'Exact-operation approval' },
             { slug: 'agentic-iam-mcp', label: 'Agentic IAM: MCP tool calls' },
             { slug: 'ciba-step-up', label: 'Human step-up with CIBA' },
           ],
+        },
+        {
+          label: 'Protocol evidence',
+          items: [{ slug: 'openid-conformance', label: 'OIDC conformance & certification' }],
         },
         {
           label: 'Identity sources',

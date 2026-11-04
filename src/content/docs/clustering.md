@@ -42,9 +42,10 @@ live in the `signing_keys` table in PostgreSQL:
 - At boot a node loads the full key set. On first boot (empty table) it
   generates the initial pair — an EdDSA key (the signing default) and an
   active RS256 key (OIDC Core §15.1 mandatory-to-implement, advertised in
-  discovery) — and persists them. A concurrent first boot may persist a
-  second pair — benign: all are published in JWKS and validate; all nodes
-  sign with the newest active key of the resolved algorithm.
+  discovery) — and persists them. Cluster nodes serialize initialization
+  through a short-lived Redis lock, so concurrently starting nodes all load
+  the same pair before serving requests and can validate each other's tokens
+  immediately.
 - Keys survive restarts, so outstanding tokens stay valid across deploys.
 - Each node polls the table every `cluster.jwks_refresh_interval_secs` and
   reloads its keystore + JWKS snapshot when the set changes — keys added by a
@@ -98,7 +99,7 @@ docker compose -f docker-compose.cluster.yml down -v
 The stack (`docker-compose.cluster.yml`, its own `issuerd-cluster` project):
 
 - `postgres`, `redis` — internal only (no host ports)
-- `issuerd-1`, `issuerd-2` — node ports `18081`/`18082` exposed for
+- `issuerd-1`, `issuerd-2` — node ports `18081`/`18082` bound to loopback for
   debugging/tests; per-node identity via `ISSUERD_CLUSTER__NODE_ID`
 - `lb` (nginx) — the only client-facing endpoint: `http://localhost:8088`
 
@@ -118,7 +119,7 @@ redis = "redis://redis:6379"          # single Redis
 url = "postgres://user:pass@postgres:5432/issuerd"
 
 [proxy]
-trusted_proxies = ["172.32.0.0/24"]   # the LB's subnet — required so login
+trusted_proxies = ["172.32.0.10/32"]  # static LB address only — required so login
                                       # failure keys use the real client IP
 
 [cluster]
@@ -153,8 +154,8 @@ TOML).
 ## Load balancer requirements
 
 - **No sticky sessions** — round-robin / least-conn are both fine.
-- Set `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`, `Host`; list the LB
-  subnet in `[proxy].trusted_proxies`.
+- Set `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`, `Host`; list only the
+  LB's exact address(es) in `[proxy].trusted_proxies`, not every peer container.
 - Health-check `/health/ready`: it probes both PostgreSQL and Redis, so a node
   that lost either dependency is drained automatically.
 - nginx caveat: upstream hostnames are resolved once at startup. If a node

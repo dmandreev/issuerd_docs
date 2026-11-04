@@ -74,8 +74,9 @@ provision = "provision.yaml"   # relative paths resolve against the working dire
 During startup (in `ServerState::from_config`, `crates/issuerd-server/src/state.rs`),
 after storage initialization and after the automatic master-realm bootstrap (for the
 in-memory/JSON backends), the daemon loads and applies the file once. On subsequent
-restarts the marker is already present and the file is ignored entirely — leaving
-the `provision` key in place is harmless.
+restarts an `applied` marker causes the file to be ignored entirely — leaving
+the `provision` key in place is harmless. Failed attempts clear their in-progress
+marker and are eligible to run again after the error is fixed.
 
 > **Warning:** Provisioning problems are **not fatal** at daemon startup. A missing
 > or unparsable file logs `failed to load provision config` at **ERROR** level; a
@@ -495,14 +496,18 @@ whether the file has been applied. With PostgreSQL the marker lives in the
 with JSON-file storage it is part of the snapshot; with in-memory storage it lives
 and dies with the process.
 
-- **Marker claimed before applying.** The provisioner atomically claims the marker
-  *first*, then applies the entities. This makes concurrent first boots safe (two
-  cluster nodes starting against an empty database cannot both provision) — but it
-  also means **a failed run leaves the marker claimed**. Re-running with the same
-  marker after a failure is a no-op; you must fix the file and either bump the
-  marker (e.g. `marker: my-deployment-v2`) or wipe the storage and start over.
-- **Daemon restart:** with a durable backend the marker exists, so the `provision`
-  file is skipped entirely — admin changes are never overwritten. With the
+- **Marker claimed before applying, completed only after success.** The provisioner
+  atomically claims an `in_progress` marker, then applies the entities and records
+  `applied` only after every step succeeds. Another node waits for the active attempt
+  instead of treating it as complete. After 60 seconds an unchanged `in_progress`
+  marker fails the wait visibly rather than silently skipping provisioning. A failed
+  attempt deletes its marker, so fixing the file and retrying with the same marker is
+  safe; there is no need to bump the marker or wipe storage after an ordinary error.
+  If the process was interrupted, verify that no node is still provisioning, then
+  remove the stale marker or choose a new marker name. Entities already created by
+  the interrupted attempt are skipped, never overwritten.
+- **Daemon restart:** with a durable backend an `applied` marker causes the `provision`
+  file to be skipped entirely — admin changes are never overwritten. With the
   **in-memory** backend the marker vanishes on restart, so provisioning re-applies
   on every boot; this is harmless because existing entities are skipped per-entity.
 - **Provisioning twice with a different marker:** the file is applied again, but
@@ -609,12 +614,15 @@ issuerd daemon -c issuerd.toml
 
 ## Common pitfalls
 
-- **Provisioning "didn't do anything" on the second attempt.** The marker is
-  claimed *before* entities are applied, so an aborted or failed first run blocks
-  all retries with the same marker. Fix the file, bump `marker:` (or wipe the
-  storage), and check the startup log for `provision failed` /
-  `failed to load provision config` — the daemon logs these at ERROR level and
-  keeps booting, which makes silent half-provisioning easy to miss.
+- **Provisioning "didn't do anything" on the second attempt.** Older versions
+  recorded failures as `applied`, so a retry was skipped; use a new marker once
+  after upgrading if you hit that failure. Current failed attempts clear their
+  marker, allowing a same-marker retry after you fix the file. A process crash
+  can leave an `in_progress` marker: after checking that no node is still
+  provisioning, remove it or choose a new marker. In every case, check the
+  startup log for `provision failed` / `failed to load provision config` — the
+  daemon logs these at ERROR level and keeps booting, which makes partial
+  provisioning easy to miss.
 - **Typo in a `realm:` reference.** All cross-references resolve by realm *name*
   (never the UUID). A reference to a nonexistent realm aborts the whole run with
   `realm '<name>' not found` — and because of the marker behavior above, leaves a

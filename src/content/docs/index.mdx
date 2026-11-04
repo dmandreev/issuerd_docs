@@ -41,10 +41,11 @@ authentication by default.
     plus **RP-Initiated Logout OP on v0.1.19** ([OIDC](https://openid.net/certification/certified-openid-connect-implementations/?cache=2026-10-23),
     [logout](https://openid.net/certification/certified-openid-providers-for-logout-profiles/)).
     The accepted submissions used the hosted conformance suite (release v5.3.3).
-    Separately, the self-hosted release v5.3.2 engineering matrix passes 43 test
-    plans, 612 modules and 31,000+ conditions with 0 failures and 0 unexpected
-    warnings. Every [release](https://github.com/issuerd/issuerd/releases) ships
-    an attested conformance report bundle. Advanced OAuth 2.1 capabilities included:
+    Separately, the latest self-hosted release v5.3.3 engineering matrix covers
+    43 plan invocations and 612 modules with 0 unexpected failures and 0
+    unexpected warnings. Read the [conformance and certification guide](/openid-conformance/).
+    Every [release](https://github.com/issuerd/issuerd/releases) ships an attested
+    conformance report bundle. Advanced OAuth 2.1 capabilities included:
     PAR, JAR/JARM, RAR, DPoP, CIBA, token exchange, dynamic client registration.
   </Card>
   <Card title="Keycloak-compatible" icon="puzzle">
@@ -64,11 +65,12 @@ authentication by default.
     load balancer — a two-node demo stack ships in the repo.
   </Card>
   <Card title="Built for AI agents" icon="star">
-    First-class support for agentic workloads: DPoP sender-constrained tokens,
-    RFC 8693 token exchange with per-call audience/scope attenuation — scoped
-    credentials per tool call — and CIBA step-up approval that keeps a
-    human-in-the-loop (HITL) over high-risk operations. End-to-end MCP guides
-    and recorded demos included.
+    DPoP sender-constrained tokens, RFC 8693 per-call attenuation, and CIBA
+    step-up approval. The built-in realm-scoped MCP server adds 67 curated tools
+    and three redacted resources: ordinary actions stay within roles and scopes,
+    while strict operations require one fresh human approval for one exact
+    operation. Any LLM can participate through a compatible MCP client.
+    [MCP guide](/mcp-server/) · [exact-operation security article](/mcp-exact-operation-approval/).
   </Card>
   <Card title="Federation &amp; MFA included" icon="padlock">
     LDAP, Active Directory, and Kerberos/SPNEGO user federation; identity brokering
@@ -98,6 +100,16 @@ see the [vulnerability reporting policy](/security/#vulnerability-reporting).
     title="Get started"
     href="/getting-started/"
     description="Docker demo stack or build from source — first realm and first token in minutes."
+  />
+  <LinkCard
+    title="One approval, one exact operation"
+    href="/mcp-exact-operation-approval/"
+    description="How the built-in MCP server keeps any model inside server-enforced policy and binds dangerous actions to exact human approval."
+  />
+  <LinkCard
+    title="OIDC conformance & certification"
+    href="/openid-conformance/"
+    description="The 11-profile version matrix, hermetic test environment, hosted evidence, and lessons from the v0.1.19 resubmission."
   />
   <LinkCard
     title="Documentation overview"

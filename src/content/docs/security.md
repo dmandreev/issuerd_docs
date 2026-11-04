@@ -132,8 +132,10 @@ only.
 
 JWT signing keys live in the shared `signing_keys` storage table (migration
 `crates/issuerd-storage/migrations/005_signing_keys.sql`), not on individual nodes. At boot the server
-loads the key set from storage, generating one when absent (`bootstrap_crypto_provider`), so every
-cluster node signs with the same active key and validates tokens issued by its peers.
+loads the key set from storage, generating the initial pair when absent (`bootstrap_crypto_provider`).
+Cluster-enabled boots serialize this initialization through a short-lived Redis lock, so concurrently
+starting nodes load one shared key set, sign with the same active key, and validate tokens issued by
+their peers immediately.
 
 > **Note:** Signing keys are **server-global**, not per-realm (a deliberate difference from
 > Keycloak). All realms and all nodes share one key set; the realm segment in the Admin API key

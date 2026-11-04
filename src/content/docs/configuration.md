@@ -26,6 +26,7 @@ implemented in `crates/issuerd-server/src/config.rs` and the daemon startup path
 - [[cache]](#cache)
 - [[oauth]](#oauth)
 - [[dpop]](#dpop)
+- [[mcp]](#mcp)
 - [[crypto.key_encryption]](#cryptokey_encryption)
 - [[outbound_http]](#outbound_http)
 - [[themes]](#themes)
@@ -74,9 +75,9 @@ Configuration is assembled from three layers, later layers winning:
    (`ISSUERD_CLUSTER__NODE_ID` in `docker-compose.cluster.yml`), so the same
    file can be mounted into every node.
 
-> **Warning:** list-valued keys (`cors.allowed_origins`, `proxy.trusted_proxies`,
-> `cluster.redis_nodes`) cannot be expressed reliably as a single environment
-> variable — set them in the config file (the cluster guide documents
+> **Warning:** list-valued keys (`cors.allowed_origins`, `mcp.allowed_origins`,
+> `proxy.trusted_proxies`, `cluster.redis_nodes`) cannot be expressed reliably
+> as a single environment variable — set them in the config file (the cluster guide documents
 > `cluster.redis_nodes` as TOML-only, see [CLUSTERING.md](/clustering/)).
 
 Behavioral notes:
@@ -481,6 +482,81 @@ or expired. RFC 9449 defines no discovery metadata for nonce support, so none
 is advertised — clients discover the requirement from the
 `use_dpop_nonce`/`DPoP-Nonce` signals.
 
+## [mcp]
+
+MCP (Model Context Protocol) surface. The flag gates three pieces:
+
+- The read-only MCP endpoint at `POST /realms/{realm}/mcp`, with 15 curated
+  tools, dual-era stateless transport, exact audience/provenance and DPoP
+  enforcement, and distributed invocation limits. See
+  [mcp-server.md](/mcp-server/) for the complete contract and client rigs.
+- RFC 9728 protected-resource metadata. The bare
+  `GET /.well-known/oauth-protected-resource` is an explicit
+  `resource_metadata` alias for the **master** realm, not origin-level
+  metadata. The canonical per-realm URL is
+  `GET /.well-known/oauth-protected-resource/{issuer-path}/realms/{realm}/mcp`
+  (the issuer path is empty when `issuer_url` has no path prefix). Metadata is
+  served only for canonical realm names; legacy UUID aliases and mismatched
+  paths answer 404.
+- RFC 8707 resource indicators at the authorization endpoint (plain,
+  PAR-pushed, and JAR request-object requests) and the token endpoint's
+  `authorization_code` / `refresh_token` grants. The allowlist holds exactly
+  one canonical realm-name value per realm — `{issuer_url}/realms/{realm}/mcp`,
+  compared byte-for-byte. Each request may carry at most one `resource`;
+  repeated values are rejected with `invalid_target` before query/form maps
+  can collapse them. A granted resource becomes the access token's `aud`
+  (`[client_id, resource]`, client id first) and trusted `resource` claim for
+  resource-server validation, and rides the refresh token as a `resource`
+  claim. Code redemption may restate it, omit it (inherit), or
+  introduce it when the code carried none; refresh may only restate or omit.
+  Every other grant refuses `resource` when MCP is enabled.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Master switch for the MCP surface. While `false` the MCP and metadata routes answer `404` (indistinguishable from an unknown realm). Supported authorization/code/refresh flows carrying `resource` fail closed with `invalid_target`; legacy token-exchange requests keep their historical ignore behavior. Requests without `resource` are unchanged. |
+| `require_dpop` | boolean | `true` | Require DPoP-bound tokens and proofs. Set `false` only for explicit Bearer compatibility; strict operation-bound step-up still requires DPoP. |
+| `invocation_rate_limit_per_minute` | integer | `60` | Distributed tool-invocation allowance for each client and subject per minute. |
+| `allowed_origins` | list of strings | `[]` | Exact browser origins allowed at the MCP transport. Empty rejects every present `Origin` when validation is enforced; non-browser requests without `Origin` remain supported. Set list values in the config file, not through a single environment variable. |
+| `step_up.enabled` | boolean | `false` | Independent `[mcp.step_up]` rollout gate for operation-bound behavior; it does not follow `[mcp].enabled`. Enable only after every cluster node and approval route supports it. |
+
+```toml
+[mcp]
+enabled = false
+require_dpop = true
+invocation_rate_limit_per_minute = 60
+allowed_origins = []
+
+[mcp.step_up]
+enabled = false
+```
+
+Environment equivalents include `ISSUERD_MCP__ENABLED`,
+`ISSUERD_MCP__REQUIRE_DPOP`,
+`ISSUERD_MCP__INVOCATION_RATE_LIMIT_PER_MINUTE`, and
+`ISSUERD_MCP__STEP_UP__ENABLED`.
+
+The document advertises the realm issuer URL as the authorization server, only
+`mcp:read` as the minimal basic scope, the actual DPoP requirement, and the
+DPoP proof-signing algorithms (identical to
+`dpop_signing_alg_values_supported` in the OIDC discovery document). Strict
+DPoP omits `bearer_methods_supported`; explicit Bearer compatibility
+advertises only `["header"]`. Runtime scope challenges name the exact ordinary
+scopes for the attempted operation and may therefore include `mcp:write`
+without advertising it as a basic PRM scope. Operation-bound approval uses a
+separate authentication challenge, not a general `mcp:step_up` scope challenge.
+When MCP is enabled, its scopes require an administrator's explicit optional assignment:
+anonymous DCR rejects them in either scope list, and Admin API, provisioning,
+and realm-default paths reject default assignments. With MCP disabled, legacy
+custom scope names keep the previous default∪optional behavior.
+
+Before enabling MCP, every cluster node must run the resource-aware version
+(older nodes drop `resource` when rotating refresh tokens), and legacy custom
+MCP scope definitions must be reconciled. Startup validates existing scopes
+and assignments and aborts on mapper/role-bearing custom scopes, default
+assignments, or open-registered clients carrying MCP scopes. MCP-disabled
+legacy deployments do not run this validation and keep booting unchanged. See
+[backup-and-upgrade.md](/backup-and-upgrade/).
+
 ## [crypto.key_encryption]
 
 Envelope encryption for the cluster-wide JWT **signing keys at rest**
@@ -558,7 +634,7 @@ inspection, an internal CA, a hermetic test rig) adds its roots here.
 |---|---|---|---|
 | `extra_ca_bundle` | path | unset | PEM file with additional root CA certificates (the file may hold several). **Additive** to the public roots. A missing file, unparseable content, or a bundle with zero valid certificates aborts the boot — fail closed, so a typo never silently falls back to public roots only. |
 | `allow_private_addresses` | bool | `false` | **Test rigs only.** Lifts the public-IP check of the SSRF-guarded outbound fetches (client `jwks_url` documents, pairwise `sector_identifier_uri` documents, JAR-by-reference `request_uri` objects), so they may dial private/loopback/link-local addresses — e.g. the hermetic OIDC conformance network. The https-only scheme check, the no-redirect policy, the body-size cap, and the timeout stay enforced. **Never enable in production**: that check is what keeps those attacker-influenced URLs from probing the internal network. |
-| `allow_private_identity_providers` | bool | `false` | **Breaking default — set it for an IdP on the internal network.** By default the identity-broker calls — discovery, JWKS, token, userinfo, and the admin `test-connection` probe — only dial publicly routable addresses: every address a hostname resolves to, and every redirect hop, is checked (an IdP address that is private, loopback, link-local, CGNAT or otherwise non-public is refused as "identity provider unreachable"), so an admin who can configure an identity provider (`manage-realm` in any realm, master included) cannot aim server-side requests at the internal network. `http` and `https` IdPs both work, and redirects between public hosts are followed. When an outbound proxy is set through `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`, the IdP host is resolved and checked locally before the proxied request (it must resolve on this host) and only same-host redirects are followed; without such variables, IdP calls do not use OS-configured proxies. Set `true` (internal Keycloak/ADFS, Keycloak in Docker, a `localhost` dev IdP) to restore the unrestricted behaviour — enabling it hands that reach back to every such admin. Responses are capped at 1 MiB in both modes. Independent of `allow_private_addresses`. |
+| `allow_private_identity_providers` | bool | `false` | **Breaking default — set it for an IdP on the internal network.** By default the identity-broker calls — discovery, JWKS, token, userinfo, and the admin `test-connection` probe — only dial publicly routable addresses: every address a hostname resolves to, and every redirect hop, is checked (an IdP address that is private, loopback, link-local, CGNAT or otherwise non-public is refused as "identity provider unreachable"), so an admin who can configure an identity provider (`manage-realm` in any realm, master included) cannot aim server-side requests at the internal network. Only `https` IdPs work by default, and redirects never downgrade HTTPS to HTTP. Set `allow_private_identity_providers = true` for an internal development IdP that needs plain HTTP; otherwise redirects between public HTTPS hosts are followed. When an outbound proxy is set through `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`, the IdP host is resolved and checked locally before the proxied request (it must resolve on this host) and only same-host redirects are followed; without such variables, IdP calls do not use OS-configured proxies. Set `true` (internal Keycloak/ADFS, Keycloak in Docker, a `localhost` dev IdP) to restore the unrestricted behaviour — enabling it hands that reach back to every such admin. Responses are capped at 1 MiB in both modes. Independent of `allow_private_addresses`. |
 
 ```toml
 [outbound_http]
@@ -602,8 +678,9 @@ overrides the keys it defines:
 
 1. built-in English (compiled in, always complete — the canonical key list is
    the source-tree `crates/issuerd-server/i18n/messages_en.json`),
-2. built-in `{locale}` (compiled in; shipped locales: `en`, `de`, `zh` — the
-   `zh` bundle is Simplified-script Chinese and serves every `zh-*` region),
+2. built-in `{locale}` (compiled in; shipped locales: `en`, `de`, `fr`,
+   `pt-BR`, `zh` — `pt-BR` is Brazilian Portuguese, `fr` serves every `fr-*`
+   region, and `zh` is Simplified-script Chinese and serves every `zh-*` region),
 3. theme English override (`{themes.dir}/{theme}/messages_en.json`),
 4. theme locale override (`{themes.dir}/{theme}/messages_{locale}.json`),
 5. theme full-tag override (`messages_{locale-with-region}.json`, e.g.
@@ -636,7 +713,7 @@ Admin API / provision YAML realm keys `internationalization_enabled`,
 `supported_locales`, `default_locale` (see [provisioning.md](/provisioning/)).
 
 To add a locale, drop a `messages_<locale>.json` into a theme directory —
-e.g. `{themes.dir}/issuerd/messages_fr.json` with `{ "login.title": "Connexion" }` —
+e.g. `{themes.dir}/issuerd/messages_es.json` with `{ "login.title": "Iniciar sesión" }` —
 then enable internationalization on the realm and add the locale to its
 supported locales (it appears in the console checkbox list automatically).
 To refine a locale for one region, add a full-tag bundle next to it —
@@ -836,6 +913,22 @@ auth_code_ttl_secs = 600        # authorization-code redemption window; 10-600, 
 [dpop.nonce]
 mode = "disabled"               # server-provided proof nonces: "disabled" | "supported" | "required"
 lifetime_secs = 30              # single-use nonce TTL; 5-300
+
+# ---- MCP ----------------------------------------------------------------------
+# Groundwork for the MCP endpoint: gates the RFC 9728 protected-resource
+# metadata routes (/.well-known/oauth-protected-resource — MCP clients read it
+# to discover the authorization server) and RFC 8707 resource indicators (the
+# `resource` parameter; the only allowlisted value is the realm's MCP resource
+# URI). The routes 404 and supported flows reject `resource` while disabled;
+# legacy token exchange keeps its historical ignore behavior.
+[mcp]
+enabled = false
+require_dpop = true
+invocation_rate_limit_per_minute = 60
+allowed_origins = []                # empty = reject every present Origin; non-browser clients omit Origin
+
+[mcp.step_up]
+enabled = false                     # independent operation-bound rollout gate
 
 # ---- Signing-key encryption at rest ------------------------------------------
 # Omitted = signing keys stored in PLAINTEXT in PostgreSQL (startup WARN).

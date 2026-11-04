@@ -9,6 +9,7 @@ Some actions should never ride on a token an agent already holds. Issuerd implem
 - [Issuerd's CIBA at a glance](#issuerds-ciba-at-a-glance)
 - [The step-up pattern](#the-step-up-pattern)
 - [Walkthrough](#walkthrough)
+- [Exact MCP operation approval](#exact-mcp-operation-approval)
 - [Recorded demo](#recorded-demo)
 - [Limits and notes](#limits-and-notes)
 - [Source map](#source-map)
@@ -64,8 +65,9 @@ The configuration that makes the story hold together:
 
 ```bash
 # 1. The agent starts backchannel authentication (client-authenticated).
-curl -u app8-chat:<secret> -X POST \
+curl -X POST \
   https://idp.example.com/realms/myrealm/protocol/openid-connect/ext/ciba/auth \
+  -d client_id=app8-chat -d client_secret=<secret> \
   -d scope="openid refunds:execute" \
   -d login_hint=alice \
   -d binding_message="Refund $150 for order #123"
@@ -90,6 +92,85 @@ curl -u app8-chat:<secret> -X POST \
 #    and call refund_order with it. When the token expires, the authority is gone.
 ```
 
+## Exact MCP operation approval
+
+The realm-scoped [MCP administration endpoint](/mcp-server/) also has a
+strict CIBA profile for irreversible and high-impact operations. It is separate
+from the legacy scope-based example above and is disabled by default. Enable it
+only after every node supports the operation and approval routes:
+
+```toml
+[mcp]
+enabled = true
+
+[mcp.step_up]
+enabled = true
+```
+
+The flow binds approval to an exact typed operation, not just a scope:
+
+1. An ordinary DPoP token with `mcp:write` and the necessary manage role calls a
+   strict tool. Issuerd stores a five-minute pending operation containing the
+   canonical arguments and expected mutation state, then returns
+   `step_up_required` with an operation ID and server-generated binding message.
+2. A confidential client initiates CIBA with that ID, the exact MCP `resource`,
+   `login_hint`, the returned binding message, and
+   `scope="openid mcp:step_up"`. The response includes an `approval_url` whose
+   ID is independent of `auth_req_id`.
+3. The hinted user authenticates freshly before any details are rendered. The
+   server displays the exact escaped arguments and expected mutation, checks
+   preconditions on GET and POST, and accepts one CSRF-protected decision. The
+   legacy JSON approval endpoint cannot be used as a bypass.
+4. The client polls with the original DPoP key and exact resource. Approval and
+   polling share a per-request serialization lock, so the decision cannot erase
+   polling history or reset the pacing interval. The client receives only an
+   `openid mcp:step_up` DPoP token, never a refresh token. The durable grant
+   lasts at most two minutes and cannot outlive the pending operation.
+5. The client repeats the exact tool call. Issuerd atomically consumes the grant,
+   checks current-state preconditions, commits the mutation, and stores the
+   redacted result. Changed arguments are rejected. A changed precondition is a
+   definite 409; an unknown outcome is retryable and never causes blind
+   re-execution or an automatic fresh approval.
+
+The step-up token cannot perform unrelated MCP calls or access UserInfo,
+Account, or Admin APIs. An exact repeat reconciles the stored result without a
+second mutation. `acr_values=0` is supported; other requested contexts are
+rejected explicitly. Bearer compatibility cannot create or execute strict
+operations.
+
+### Returning to the client after approval
+
+A confidential client may include an optional `return_to` in operation-bound
+CIBA initiation. It must exactly match one of the client's registered
+`redirect_uris`; arbitrary or merely same-origin URLs are rejected with
+`invalid_request`. After approval or denial, Issuerd answers HTTP 303 to that
+registered URI, while clients without `return_to` keep the existing static
+decision page. The destination is checked again at decision time, so changing
+the client registration cannot turn this into an open redirect. The approval
+page adds only that validated destination's origin to CSP `form-action`, rather
+than blocking a registered cross-origin return or allowing arbitrary sources.
+The remaining `default-src 'none'`, `frame-ancestors 'none'`, and `base-uri
+'none'` restrictions are unchanged.
+
+This preserves the five-minute pending-operation and fresh-authentication
+windows and the at-most-two-minute execution grant. It also supports a same-tab
+approval flow without hidden iframes, `window.close()`, or moving the trusted
+exact-operation approval page into an untrusted agent application.
+
+Run the real TypeScript confidential profile and three-node approval flow:
+
+```bash
+./examples/mcp-admin/scripts/e2e-local.sh
+./examples/mcp-admin/scripts/e2e-compose.sh
+./examples/mcp-admin/scripts/e2e-step-up-cluster.sh
+```
+
+The cluster runner deliberately places approval on node 2, polling on node 3,
+and final execution on node 1 while preserving one canonical resource and DPoP
+key. See [MCP server](/mcp-server/) and
+[`examples/mcp-admin/`](https://github.com/issuerd/issuerd/blob/main/examples/mcp-admin/) for the full operator and client
+contracts.
+
 ## Recorded demo
 
 The full loop — a refund request that exceeds the agent's autonomous limit, the in-app approval card backed by a real CIBA flow, the DPoP-bound step-up token, and the same call without step-up dying with a real `403` — recorded against a live Issuerd lab rig:
@@ -104,7 +185,7 @@ The full loop — a refund request that exceeds the agent's autonomous limit, th
 ## Limits and notes
 
 - **Poll mode only.** CIBA ping and push delivery are deliberately out of scope (see *Project Scope* in the [README](https://github.com/issuerd/issuerd/blob/main/README.md)); `client_notification_token` is parsed but no outbound notification is attempted.
-- Pending requests live in the distributed cache (`ciba:{auth_req_id}`) with their expiry as TTL — they work across a cluster and disappear on their own. An unknown or expired `auth_req_id` answers `expired_token` at both the approval and polling endpoints.
+- Pending requests live in the distributed cache (`ciba:{auth_req_id}`) with their expiry as TTL — they work across a cluster and disappear on their own. An unknown, cross-client, or redeemed `auth_req_id` answers `invalid_grant` at polling; actual expiry answers `expired_token`. The legacy approval endpoint uses its corresponding expired/unknown-request rejection, while operation-bound approval uses the separate exact-operation page.
 - The approval endpoint is a browser form POST under the realm SSO session; it is same-site by design (the session cookie is `SameSite=Lax`), which is what allows in-app approval cards on sibling subdomains without any CORS surface.
 - **Every CIBA decision is auditable through the realm's login events** (recorded by default): `ciba_auth` when a backchannel request is accepted (details carry the scope, expiry, and the binding message's *length* — never the message text, which can carry PII), `ciba_auth_error` for rejections (`invalid_scope`, disabled or unknown client, missing hint, unknown/expired `auth_req_id` at approval, cross-user approval attempts), `ciba_approve` / `ciba_deny` for the user's decision, and a `login` event with `details.method=ciba` when a poll mints the tokens. A denied or expired poll records `login_error` with `access_denied` / `expired_token`; `authorization_pending` and `slow_down` polls are protocol chatter and record nothing.
 
@@ -114,7 +195,10 @@ The full loop — a refund request that exceeds the agent's autonomous limit, th
 |---|---|
 | Request parsing and validation | `crates/issuerd-protocol/src/ciba.rs` |
 | Backchannel auth + approval handlers | `crates/issuerd-server/src/routes/oidc.rs` (`ciba_auth_handler`, `ciba_approve_handler`) |
-| Polling in the token endpoint | `crates/issuerd-server/src/routes/oidc.rs` (`urn:openid:params:grant-type:ciba`) |
+| Polling in the token endpoint | `crates/issuerd-server/src/routes/oidc.rs` + `crates/issuerd-server/src/ciba_step_up.rs` (`urn:openid:params:grant-type:ciba`) |
+| Exact-operation approval page | `crates/issuerd-server/src/ciba_approval.rs` |
+| Durable grants and atomic execution | `crates/issuerd-core/src/mcp_step_up.rs`, `crates/issuerd-storage/src/step_up.rs`, migration `018_mcp_step_up_grants.sql` |
+| Confidential TypeScript acceptance | `examples/mcp-admin/client/src/ciba.ts`, `step-up.ts` |
 | DPoP binding of the issued token | `crates/issuerd-server/src/dpop.rs` |
 | Discovery advertisement | `crates/issuerd-protocol/src/discovery.rs` (`backchannel_authentication_endpoint`) |
 
