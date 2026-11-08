@@ -38,7 +38,7 @@ Everything in this guide is seeded demo content with well-known credentials — 
 | A — Docker demo stack | Docker with the Compose plugin (`docker compose`). Nothing else — the stack pulls the published server image from Docker Hub, no compilation. |
 | B — Build from source | Rust toolchain **1.95+** (the workspace MSRV). Node.js **20+** is additionally required if you want the embedded browser consoles (admin console, account console, login pages). |
 
-No database is needed for a first run: option B uses the in-memory storage backend by default, and option A brings its own PostgreSQL and Redis containers.
+No database is needed for a first run: option B uses the in-memory storage backend by default, and option A brings its own PostgreSQL and Redis containers. For a durable single-node installation without an external database service, option B can instead use embedded SQLite through `[storage.sqlite]`; see [Configuration](/configuration/#storage). SQLite runs automatic migrations and the master-realm bootstrap, and is strictly single-node.
 
 ## Installation option A — the Docker demo stack
 
@@ -149,7 +149,7 @@ issuerd [-v...] [-q...] <COMMAND>
 | Command | Flags | What it does |
 |---|---|---|
 | `daemon` | `-c, --config <path>` (default `issuerd.toml`) | Run the server in the foreground until Ctrl+C/SIGTERM (graceful shutdown). |
-| `provision` | `-c, --config <path>` (default `issuerd.toml`), `-f, --file <path>` (required) | Connect to the storage configured in the server config, apply a provision file (YAML/TOML/JSON) **exactly once**, and exit. For PostgreSQL it also runs pending schema migrations first. |
+| `provision` | `-c, --config <path>` (default `issuerd.toml`), `-f, --file <path>` (required) | Connect to the storage configured in the server config, apply a provision file (YAML/TOML/JSON) **exactly once**, and exit. For PostgreSQL and SQLite it also runs pending schema migrations first. |
 | `openapi` | `-o, --output <path>` (default `openapi.json`) | Write the merged OpenAPI 3.0 specification (Admin API + account/protocol endpoints) and exit. |
 | `example` | `<server-config\|provision-config>` (positional), `-o, --output <path>` | Write a fully-commented example configuration file and exit. |
 | `healthcheck` | `--url <url>` (default `http://localhost:8080/ready`), `--insecure` (skip TLS verification), `--timeout-secs <n>` (default 5) | Probe a URL and exit non-zero unless the response is 2xx; intended for container healthchecks so the runtime image needs no curl. |
@@ -171,12 +171,12 @@ Knowing what the server does on its first start saves confusion later. All of th
 
 **On every boot, all backends:**
 
-- The JSON-file backend loads its snapshot; PostgreSQL runs pending schema migrations automatically.
+- The JSON-file backend loads its snapshot; PostgreSQL and SQLite run pending schema migrations automatically.
 - The signing-key set is loaded from shared storage; if it is empty (first ever boot), the initial pair — a fresh EdDSA (Ed25519) key (the signing default) and an active RS256 key (mandatory-to-implement per OIDC Core, so discovery advertises it) — is generated and persisted so restarts — and every node of a cluster — converge on the same keys.
 
-**Automatic master-realm bootstrap — in-memory and JSON-file backends only:**
+**Automatic master-realm bootstrap — in-memory, JSON-file, and SQLite backends:**
 
-If (and only if) the storage backend is `in-memory` or `json-file` **and** no realms exist yet, the server creates the `master` realm with:
+If (and only if) the storage backend is `in-memory`, `json-file`, or `sqlite` **and** no realms exist yet, the server creates the `master` realm with:
 
 - user `admin` (Argon2id-hashed) whose password is `bootstrap_admin_password` (config key, or the `ISSUERD_BOOTSTRAP_ADMIN_PASSWORD` environment variable); when that is unset or empty a random password is generated and printed **once** to stderr — read it from the console (or `docker logs`) on first boot,
 - the realm-management roles `manage-realm`, `view-realm`, `manage-users`, `view-users`, `manage-clients`, `view-clients`, `impersonation`, all assigned to `admin`,
