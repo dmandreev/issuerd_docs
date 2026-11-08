@@ -5,9 +5,9 @@ description: "Measured performance of Issuerd against Keycloak 26.7 under identi
 
 Measured performance of Issuerd against **Keycloak 26.7** under identical container
 resource limits, plus CPU/RAM/disk/log sizing data. **Issuerd is faster than
-Keycloak 26.7 in every measured scenario** — up to 7.8× the throughput, with lower
+Keycloak 26.7 in every measured scenario** — up to 7.5× the throughput, with lower
 p99 latency in every headline scenario (§2; the agentic-workload nuances are in §4) —
-while idling on ~6× less memory and shipping an 8.7× smaller image. **Every number
+while idling on ~6.3× less memory and shipping a 7.5× smaller image. **Every number
 on this page comes from a real run** of the benchmark stack in `tests/perf/` on the
 hardware described below — nothing is estimated unless it is explicitly marked
 *(extrapolated)*.
@@ -34,6 +34,13 @@ Topology: one Docker bridge network `172.34.0.0/24` with `internal: true` — **
 internet access in either direction, nothing is published**. Both servers serve plain
 HTTP inside the network (TLS is normally terminated at the edge; both sides are
 measured identically).
+
+The final dataset is `release-0.2.2-final-20261108`. It combines the complete
+`release-0.2.2-fixed-20261108` campaign with a targeted small/large CIBA rerun
+(`ciba-cookie-fixed-20261108`) after the harness's SSO-cookie selector was corrected.
+The server build is identical across these runs. The k6 harness also normalizes
+exported P-256 JWK coordinates to their RFC-required fixed width before creating
+DPoP proofs.
 
 ### 1.2 Resource tiers
 
@@ -73,15 +80,14 @@ fixed across tiers.
   built-in HTTP auth channel is pointed at the `ad-simulator` container, which
   approves every backchannel request through KC's own callback endpoint. The k6
   script waits a **modeled 200 ms device-approval latency** before its first
-  poll (polling earlier always loses the race against KC's auth-session commit
-  and lands on the `slow_down` interval path); Issuerd's approval is an
-  in-loop SSO-cookie call instead (§1.4). Both are disclosed in the numbers.
+  poll; Issuerd's approval is an in-loop SSO-cookie call instead (§1.4). Both are
+  disclosed in the numbers.
 - **Introspection** on Keycloak 25+ requires the calling client in the token's
   `aud`; the imported realm adds an `audience-self` protocol mapper to the
   confidential client (no equivalent needed on Issuerd).
 - All reported runs had **0% scenario errors** (k6 `errors` rate), except the
-  bulk-provisioning scenario where 409-conflict skips are by design (§3 note) and
-  one small-tier DPoP run with 0.6% transient transport failures (§4 note).
+  bulk-provisioning and repeated-tier admin scenarios where 409-conflict skips
+  are expected (§3 and §7). Every other scenario also had 0% HTTP failures.
 
 ### 1.4 Scenarios and load profiles
 
@@ -103,52 +109,45 @@ Throughput (requests/second, higher is better):
 
 | Scenario | Issuerd | Keycloak 26.7 | ratio |
 |---|---:|---:|---:|
-| discovery | **61,560** | 7,872 | 7.8× |
-| client_credentials | **1,630** | 756 | 2.2× |
-| password_grant (login) | **129** | 59.5 | 2.2× |
-| userinfo | **13,989** | 8,567 | 1.6× |
-| introspect | **13,107** | 5,966 | 2.2× |
-| auth_code_flow | **309** (103 logins/s) | 168 (55.8 logins/s) | 1.8× |
-| admin_users (provisioning) | **133** | 56 | 2.4× |
+| discovery | **59,872** | 8,371 | 7.2× |
+| client_credentials | **2,776** | 660 | 4.2× |
+| password_grant (login) | **155** | 106 | 1.5× |
+| userinfo | **28,459** | 9,096 | 3.1× |
+| introspect | **25,716** | 5,888 | 4.4× |
+| auth_code_flow | **361** (120 logins/s) | 283 (94 logins/s) | 1.3× |
+| admin_users (provisioning) | **154** | 122 | 1.3× |
 
 p99 latency (ms, lower is better — Issuerd is lower in **every** scenario):
 
 | Scenario | Issuerd p99 | Keycloak 26.7 p99 |
 |---|---:|---:|
-| discovery | **2.2** | 86.9 |
-| client_credentials | **37.5** | 192.8 |
-| password_grant | **218.9** | 437.4 |
-| userinfo | **12.1** | 91.1 |
-| introspect | **7.1** | 84.8 |
-| auth_code_flow | **118.8** | 337.6 |
-| admin_users | **107.4** | 233.7 |
+| discovery | **2.2** | 87.1 |
+| client_credentials | **26.4** | 197.4 |
+| password_grant | **174.4** | 297.0 |
+| userinfo | **7.0** | 90.7 |
+| introspect | **4.1** | 85.6 |
+| auth_code_flow | **109.7** | 214.3 |
+| admin_users | **88.1** | 118.1 |
 
 ![Throughput by scenario, medium tier](/images/perf/throughput_vs_keycloak_medium.png)
 ![p99 latency by scenario, medium tier](/images/perf/p99_vs_keycloak_medium.png)
 
 Reading the table honestly:
 
-- Both servers hash passwords with Argon2id by default (parameters in §1.3).
-  Single-VU latency probes: Issuerd 21.8 ms avg vs Keycloak 41.6 ms avg on
-  password_grant.
-- **Logins and token issuance are CPU-bound on the password hasher / signer** —
-  this is where Issuerd's async architecture still wins outright: 2.2× the login
-  throughput with half the p99, and it keeps winning as CPU is added (§3).
-- **Session-checked reads (`userinfo`/`introspect`): Issuerd wins both at every
-  tier.** Medium tier: `userinfo` 13,989 vs 8,567 rps (1.6×), `introspect`
-  13,107 vs 5,966 rps (2.2×) — with p99 12.1 ms vs 91.1 ms and 7.1 ms vs 84.8 ms.
-  Large tier: `userinfo` 26,293 vs 19,642 rps, `introspect` 24,197 vs 12,493 rps.
-  Issuerd serves the whole read path from an Infinispan-style read model —
-  session validity, the user record, roles/groups, client and scope
-  configuration, and the fully rendered `userinfo` body are all cached with
-  synchronous, epoch/generation-validated invalidation — and its PostgreSQL
-  averages ~1% CPU under large-tier `userinfo` (1.1%), close to Keycloak's
-  (0.3%). The design choice stands: revoke a session (or change a role) and it
-  takes effect **immediately** on every node, no invalidation-latency window.
-- Keycloak's medians on cached reads are excellent (p50 0.7–1.5 ms) but its tail
-  is not: at small/medium its p95 jumps to 79–99 ms, and even at the large tier
-  p99 stays 62–70 ms on paths whose p95 has dropped to ~3–5 ms — a GC-pause-shaped
-  tail. Issuerd's p50→p99 spread stays tight (e.g. discovery 0.7 ms → 2.2 ms).
+- Both servers hash passwords with Argon2id by default (parameters in §1.3), and
+  Issuerd additionally persists the audit events that Keycloak skips in this setup.
+- **Session-checked reads (`userinfo`/`introspect`): Issuerd wins at every tier.**
+  Medium tier: `userinfo` 28,459 vs 9,096 rps (3.1×), `introspect` 25,716 vs 5,888
+  rps (4.4×). Large tier: `userinfo` 51,976 vs 20,514 rps, `introspect` 46,786 vs
+  12,947 rps. Issuerd serves the read path from a generation-validated read model,
+  while token-signature, expiry, revocation, realm `not_before`, and session-validity
+  checks still run before a cached response is used.
+- Keycloak's medians on cached reads are good, but its tail latency is much higher:
+  medium-tier p99 is 90.7 ms for `userinfo` and 85.6 ms for `introspect`, versus
+  7.0 ms and 4.1 ms for Issuerd.
+- The throughput lead is not a claim that every path scales linearly. In particular,
+  client-credentials issuance is nearly flat across the tested tiers (§3), and CIBA
+  has lower per-request p99 on Keycloak despite Issuerd's higher cycle rate (§4).
 
 ## 3. Tier scaling (1 → 2 → 4 CPU)
 
@@ -156,18 +155,18 @@ Requests/second:
 
 | Scenario | server | small | medium | large |
 |---|---|---:|---:|---:|
-| discovery | Issuerd | **40,588** | **61,560** | **99,008** |
-| | Keycloak | 1,756 | 7,872 | 21,013 |
-| client_credentials | Issuerd | **860** | **1,630** | **3,387** |
-| | Keycloak | 205 | 756 | 1,693 |
-| password_grant | Issuerd | **73.5** | **129** | **222** |
-| | Keycloak | 24.3 | 59.5 | 104.1 |
-| userinfo | Issuerd | **7,307** | **13,989** | **26,293** |
-| | Keycloak | 2,964 | 8,567 | 19,642 |
-| introspect | Issuerd | **6,829** | **13,107** | **24,197** |
-| | Keycloak | 2,368 | 5,966 | 12,493 |
-| auth_code_flow | Issuerd | **182** | **309** | **532** |
-| | Keycloak | 59.2 | 168 | 289 |
+| discovery | Issuerd | **43,952** | **59,872** | **97,384** |
+| | Keycloak | 1,706 | 8,371 | 22,586 |
+| client_credentials | Issuerd | **2,490** | **2,776** | **2,730** |
+| | Keycloak | 112 | 660 | 1,763 |
+| password_grant | Issuerd | **94.3** | **155** | **264** |
+| | Keycloak | 41.2 | 106 | 115 |
+| userinfo | Issuerd | **16,662** | **28,459** | **51,976** |
+| | Keycloak | 2,731 | 9,096 | 20,514 |
+| introspect | Issuerd | **15,384** | **25,716** | **46,786** |
+| | Keycloak | 1,928 | 5,888 | 12,947 |
+| auth_code_flow | Issuerd | **239** | **361** | **549** |
+| | Keycloak | 106 | 283 | 317 |
 
 ![Issuerd throughput vs tier](/images/perf/issuerd_scaling.png)
 ![Throughput, small tier](/images/perf/throughput_vs_keycloak_small.png)
@@ -177,110 +176,72 @@ Requests/second:
 
 Observations:
 
-- **Issuerd scales almost linearly on CPU-bound paths**: client_credentials
-  860 → 3,387 (3.9× for 4× the CPU), password_grant 73.5 → 222 (3.0×),
-  auth_code_flow 182 → 532 (2.9×).
-- **`userinfo` and `introspect` scale near-linearly and win every tier**
-  (userinfo 7,307 → 26,293, introspect 6,829 → 24,197 — ≈1.8–1.9× per CPU
-  doubling): app-CPU-bound (peak ≈410% of the 400% large-tier cap) with
-  PostgreSQL averaging ≈1%, beating Keycloak's large-tier throughput 1.3×/1.9×
-  with far better tails (userinfo p99 7.5 ms vs 70.0 ms, introspect 4.3 ms vs
-  65.4 ms at the large tier).
-- `discovery` serves a pre-rendered, content-validated document and reaches
-  **99,008 rps** at the large tier (p99 1.6 ms) — 4.7× Keycloak's 21,013, a
-  number Issuerd already exceeds at the small tier. Scaling flattens (2.4× for
-  4× CPU) because the fixed 50 k6 VUs, not the server, become the limit
-  (large-tier p50 is 0.4 ms).
-- Keycloak 26.7 scales well too — discovery 1,756 → 21,013, password_grant
-  24.3 → 104.1 — but starts lower everywhere.
-- Keycloak boots and serves at the small tier (1 CPU / 512 MiB), but login p99 is
-  2.5 s and auth-code p99 is 1.6 s there; Issuerd's worst small-tier p99 is
-  326 ms (password_grant, Argon2id on 1 CPU).
+- **`userinfo` and `introspect` scale close to linearly** across these tiers:
+  16.7k → 28.5k → 52.0k and 15.4k → 25.7k → 46.8k respectively.
+- **`client_credentials` does not scale linearly in this campaign**: it stays around
+  2.5–2.8k rps. Every grant also writes its client-login event and client session;
+  these results replace the older pre-audit-fix figures, which were collected while
+  PostgreSQL rejected the synthetic subject's event row.
+- `password_grant` scales 94 → 155 → 264 logins/s, and `auth_code_flow` scales
+  239 → 361 → 549 requests/s. `discovery` reaches 97,384 rps at the large tier;
+  scaling flattens as the fixed 50 k6 VUs become the limiting factor.
+- Keycloak also serves at the small tier, but with much larger tails: client-credentials
+  p99 is 1.60 s, password-grant p99 1.19 s, and auth-code p99 690 ms there.
 - `admin_users` is compared at the medium tier only: the small/large runs reused
   the deterministic user-name space on the same database, so most requests were
-  409-conflict skips rather than provisioning, and are excluded from the
-  comparison. The medium rows above ran against a fresh namespace for both
-  servers.
+  409-conflict skips rather than new provisioning, and are excluded from the
+  comparison. The medium rows above ran against a fresh namespace for both servers.
 
 ## 4. Agentic workloads (DPoP / CIBA)
 
-Issuerd implements **DPoP (RFC 9449)** and **CIBA (poll mode)** — the two flows
-that matter most for agentic IAM (proof-of-possession tokens for tool/API calls,
-and decoupled user approval for long-running agent actions). Keycloak 26.7
-supports both (DPoP on by default since 26.4; CIBA poll mode via its HTTP auth
-channel), so this section is a head-to-head.
+Issuerd implements **DPoP (RFC 9449)** and **CIBA (poll mode)**. Keycloak 26.7
+supports both, so this section is a head-to-head. DPoP is measured in proof-carrying
+HTTP requests/s; CIBA is measured in complete cycles/s.
 
 | Scenario | server | small | medium | large | p99 (medium) |
 |---|---|---:|---:|---:|---:|
-| `dpop` (proof-carrying requests/s) | Issuerd | **2,094** | **4,262** | **7,649** | **74.9 ms** |
-| | Keycloak | 532 | 1,434 | 3,151 | 110.6 ms |
-| `ciba` (full cycles/s) | Issuerd | **188** | **285** | **446** | 24.5 ms |
-| | Keycloak | 46.0 | 47.2 | 47.6 | **10.1 ms** |
+| `dpop` | Issuerd | **5,819** | **9,987** | **11,592** | **40.9 ms** |
+| | Keycloak | 459 | 1,442 | 3,138 | 110.9 ms |
+| `ciba` | Issuerd | **343.9** | **346.7** | **340.9** | 17.9 ms |
+| | Keycloak | 41.2 | 46.4 | 46.4 | **11.1 ms** |
 
 ![Agentic workloads, medium tier](/images/perf/agentic_medium.png)
 
 - **DPoP**: each iteration mints a fresh ES256 proof in k6 via WebCrypto; the
   server verifies the signature, the single-use `jti`, and (on userinfo) the
-  `ath` token binding. Issuerd leads 2.4–3.9× depending on tier — ES256
-  verification is pure CPU, and Issuerd's lead tracks its general CPU
-  efficiency. Across the three tiers the campaign pushed **840k DPoP
-  proof-carrying requests through Issuerd and 307k through Keycloak**.
-- **CIBA**: the cycle shapes differ by design (§1.4): Issuerd's cycle is three
-  measured requests (bc-auth → SSO-cookie approve → poll), Keycloak's is two
-  (bc-auth → poll) with the approval performed out-of-band by the ad-simulator
-  container and a modeled 200 ms device-approval latency before the first poll.
-  Two honest ways to read it:
-  - *Cycle rate at 10 VUs*: Issuerd completes **285 cycles/s** at the medium
-    tier and scales with CPU (188 → 446); Keycloak sits flat at **≈47 cycles/s**
-    at every tier — bounded by the harness (10 VUs × 200 ms modeled latency ≈
-    50 cycles/s ceiling), not by server capacity: Keycloak's app CPU averaged
-    only 29–36% of one core during CIBA, so its real ceiling is far above what
-    this harness can express.
-  - *Per-request latency*: both servers are excellent — Keycloak's p99 is
-    10.1 ms vs Issuerd's 24.5 ms at the medium tier. Note Issuerd's measured
-    requests include the approval write path itself (browser-session
-    authentication + approval + audit event), which the Keycloak numbers
-    delegate to the helper container.
-  - Load on the database: Issuerd's CIBA is its heaviest DB workload —
-    PostgreSQL averaged ~55% of one core at the medium tier and ~99% of one core
-    (of its 2-core allowance) at the large tier, without saturating.
-- Across the campaign Issuerd completed **46.6k full CIBA cycles** and Keycloak
-  **8.5k**, all with 0 errors. The one blemish anywhere in the campaign:
-  Issuerd's small-tier DPoP run recorded 0.61% transient transport failures
-  (769 of 125,718 requests; the scenario-level `errors` rate stayed 0) — a
-  one-off at the 1-CPU tier, not a systematic limit.
+  `ath` token binding. Across the three tiers the campaign pushed approximately
+  **1.64 million proof-carrying requests through Issuerd and 302k through Keycloak**,
+  with zero scenario errors.
+- **CIBA cycle rate**: Issuerd completes about 341–347 cycles/s across the tiers;
+  Keycloak sits at about 41–47 cycles/s. Keycloak is bounded by the harness here:
+  10 VUs × 200 ms modeled approval latency gives a roughly 50 cycles/s ceiling.
+- **CIBA latency is a genuine counterexample to an across-the-board latency win**:
+  Keycloak's medium-tier HTTP p99 is 11.1 ms versus Issuerd's 17.9 ms. Issuerd's
+  measured cycle includes the approval write itself (browser-session authentication,
+  approval, and audit), while Keycloak's approval runs in the helper container.
+- Across the three tiers Issuerd completed approximately **51.6k full CIBA cycles**
+  and Keycloak **8.0k**, all with zero scenario errors.
 
 ## 5. Resource usage: CPU, RAM, images
 
-**Memory.** Issuerd's working set is an order of magnitude smaller and flat across
-scenarios — no GC, no heap to tune:
+**Memory.** Issuerd's working set is substantially smaller and does not require a JVM
+heap. These figures include the application container only, not PostgreSQL:
 
-| | idle RSS | peak under load (medium tier) |
-|---|---:|---:|
-| Issuerd app | 88 MiB | 74–158 MiB across all 9 scenarios |
-| Keycloak 26.7 app | 533 MiB | 696–818 MiB |
+| | idle RSS | peak under load (medium tier) | worst peak (large tier) |
+|---|---:|---:|---:|
+| Issuerd app | 91.5 MiB | 80.7–288.7 MiB across 9 scenarios | 386.3 MiB (admin_users) |
+| Keycloak 26.7 app | 575.5 MiB | 754.5–810.4 MiB | 1,170.4 MiB (auth_code_flow) |
 
 ![Peak memory under load](/images/perf/memory_medium.png)
 
-At the large tier the worst peaks were 271 MiB (Issuerd, bulk provisioning) vs
-1,255 MiB (Keycloak, auth_code_flow) against a 2 GiB limit.
+**CPU.** Read-heavy scenarios approach their container CPU caps on both servers.
+CIBA does not saturate the application allocation in this harness; its cycle shape and
+approval pacing are more useful for interpreting the result than raw CPU percentage.
 
-**CPU.** Under load both servers saturate their container CPU cap on CPU-bound
-scenarios (Issuerd averages 175–191% and peaks ≈190–205% of its 200% medium cap
-on discovery, userinfo and introspect; Keycloak peaks ≈200–210%). CIBA is the
-only scenario that saturates neither (§4). No measured read path is DB-bound:
-Issuerd's PostgreSQL averages ≤1.2% CPU under `discovery`, `userinfo` and
-`introspect` at every tier (Keycloak's: ≤0.5%), and remaining DB work is on the
-write paths — logins, CIBA cycles and provisioning.
-
-**Image footprint.** 29.5 MiB vs 258.1 MiB **compressed** — the content size a
-`docker pull` transfers (`docker image inspect` `.Size` under Docker Desktop's
-containerd image store) — 8.7× smaller. Uncompressed on disk it is 119 MB vs
-762 MB (6.4×); of that, the stripped Issuerd release binary itself is ~52 MB
-and the rest is the distroless base plus the krb5 shared libs (the Keycloak
-figure is the optimized production image — the base image plus its persisted
-build state). Either way: faster pulls, faster cold starts and a smaller CVE
-surface (distroless: no shell, no package manager).
+**Image footprint.** 34.6 MiB vs 258.2 MiB **compressed pull size** (Docker image
+`.Size` under Docker Desktop's containerd image store) — **7.5× smaller**. The
+Issuerd image is distroless: no shell or package manager; only the stripped binary,
+minimal runtime libraries, and Kerberos shared libraries are shipped.
 
 ![Container image footprint](/images/perf/image_size.png)
 
@@ -288,29 +249,23 @@ surface (distroless: no shell, no package manager).
 
 ### 6.1 Database size vs user count
 
-Measured on the campaign's seeding ladder (3 → 1,003 → 25,548 → 115,548 users;
+Measured on the campaign's seeding ladder (3 → 1,003 → 23,327 → 113,327 users;
 `users` + `credentials` table heap):
 
-- Marginal cost per stored user: **≈702 B** (slope between the 1k and 115.5k
+- Marginal cost per stored user: **≈710 B** (slope between the 1k and 113.3k
   points; includes the Argon2id password credential). PostgreSQL page
   granularity makes small populations look step-wise.
-- Whole database at **115,548 users, steady state** (sessions/events wiped):
-  **86.5 MiB** total (all tables + indexes), i.e. well under 1 GiB for a
+- Whole database at **113,327 users, steady state** (sessions/events wiped):
+  **85.7 MiB** total (all tables + indexes), i.e. well under 1 GiB for a
   hundred-thousand-user directory. *(Extrapolated: 1 M users ≈ 0.7 GiB for
   users+credentials, ≈0.8 GiB whole DB — projection, not measured.)*
-- The same database **before** wiping transient rows (102.8k live sessions,
-  ~352k stored events incl. admin events): 220.3 MiB — i.e. **login churn can
-  exceed user data** if events/sessions are never expired. Set
-  `events_expiration_secs` per realm and rely on session expiry; dead tuples are
-  reclaimed by autovacuum in normal operation.
+- The same database **before** wiping transient rows (74,448 live sessions and
+  1,112,048 stored login/admin events): **418.7 MiB**. Login churn can exceed
+  user data if events/sessions are never expired. Set `events_expiration_secs`
+  per realm and rely on session expiry; dead tuples are reclaimed by autovacuum
+  in normal operation.
 
 ![Database growth](/images/perf/disk_users.png)
-
-Reference: the Keycloak 26.7 database measured 15.9 MB after import (realm +
-1,000 users) and 80.9 MB after its three matrices (≈5.5 M requests, ≈30k
-logins). Keycloak 26 persists user sessions in the database by default, so its
-database grows per login too — event persistence is still off in this setup
-(§1.3).
 
 ### 6.2 Per-login and per-CIBA-cycle churn (Issuerd, measured)
 
@@ -318,76 +273,71 @@ Derived from table-size deltas over runs with known iteration counts:
 
 | Artifact | Size |
 |---|---:|
-| login event row (`events`) | ≈322 B |
-| `user_sessions` row | ≈259 B |
-| `client_sessions` row | ≈204 B |
-| **total per interactive login** | **≈785 B** (heap; indexes/WAL extra) |
+| login event row (`events`) | ≈304 B |
+| `user_sessions` row | ≈247 B |
+| `client_sessions` row | ≈180 B |
+| **total per interactive login** | **≈731 B** (heap; indexes/WAL extra) |
 | admin event row (provisioning audit) | ≈220 B |
-| full CIBA cycle (bc-auth → approve → poll, all tables) | ≈1.18 KB |
+| full CIBA cycle (bc-auth → approve → poll, all tables) | ≈1.17 KB |
 
 ### 6.3 Log volume (stdout, INFO, measured)
 
-Issuerd logs every request span plus one INFO event per login/token issue.
 Measured via `docker logs` byte deltas around dedicated 30–60 s bursts:
 
 | Traffic | Log bytes / request |
 |---|---:|
 | discovery | ≈0.49 KB |
-| client_credentials | ≈1.7 KB |
-| CIBA | ≈1.2 KB |
-| password_grant (login) | ≈1.75 KB |
+| client_credentials | ≈1.14 KB |
+| CIBA | ≈1.17 KB |
+| password_grant (login) | ≈1.81 KB |
 
 Rule of thumb: `log bytes/day ≈ rps × bytes-per-request × 86,400`. Example: **100
-logins/s ≈ 15 GB/day** at INFO *(arithmetic projection from the measured
+logins/s ≈ 15.7 GB/day** at INFO *(arithmetic projection from the measured
 per-request rate)*. For high-volume deployments run the app at WARN and/or ship
-JSON logs to a collector with rotation. Keycloak writes almost nothing per
-request by default (1.7 MB total after its whole 9-scenario medium matrix of
-≈1.5 M requests — ≈1.2 B/request), so this line item is Issuerd-specific — the
-trade-off for always-on audit detail.
+JSON logs to a collector with rotation. Keycloak writes little per-request output
+in this setup, so this line item is primarily an Issuerd sizing consideration — the
+trade-off for always-on request and audit detail.
 
 ### 6.4 Image + runtime disk budget
 
 | Component | Disk |
 |---|---:|
-| Issuerd image (distroless) | 29.5 MB compressed pull size (119 MB on disk; the release binary alone is ~52 MB) |
+| Issuerd image (distroless) | 34.6 MiB compressed pull size |
 | Database, 100k users, steady state | ~0.1 GiB |
-| Database churn | ≈785 B × retained logins (until sessions/events expire) |
+| Database churn | ≈731 B × retained logins (until sessions/events expire) |
 | Logs at INFO | ≈0.5–1.8 KB × requests (until rotated) |
 
 ## 7. Scale test: 100,000+ users
 
-Seeded to **115,548 users** through the public Admin API (which also measures bulk
-provisioning): **157 users/s sustained for 10.6 minutes** (100,000 users, each with
-an Argon2id password — the hasher, not the insert, is the bottleneck; 10% of
-requests were idempotent 409-skips by design). Against that database:
+Seeded 100,000 users through the public Admin API (which also measures bulk
+provisioning): **161.3 users/s sustained for about 10.3 minutes**, each with an
+Argon2id password. The run had 10.03% idempotent 409-skips by design and zero
+scenario errors. Together with users created by earlier scenarios, the final database
+contained **113,327 users**. Against that database:
 
-- `password_grant` over a **100,000 distinct-user pool** (no repeats): 128.5
-  logins/s, p99 218.9 ms, 0 errors (a corroborating 120 s/40-VU run logged
-  15,200 logins at 126.4 logins/s, p99 394.5 ms, 0 errors — session count
-  verified in the DB snapshot). The same scenario on the 1k-user database ran
-  131.9 logins/s, p99 215.6 ms — user count does not measurably affect the
-  token path.
-- `auth_code_flow` at 100k users: **103 full logins/s** (309 req/s), p99
-  118.8 ms, 0 errors.
+- A 120 s, 40-VU `password_grant` scale run completed **152.47 logins/s**, p99
+  337.9 ms, with zero errors. A separate 60 s, 20-VU log-sizing burst completed
+  **155.08 logins/s**, p99 174.4 ms, also with zero errors.
+- A 90 s, 15-VU `auth_code_flow` run completed **120.28 full logins/s**
+  (360.83 requests/s), p99 109.7 ms, with zero errors.
 - The medium-tier headline rows for `discovery`, `client_credentials`, `ciba`,
-  `password_grant` and `auth_code_flow` (§2) were measured against this
-  115,548-user database (the Keycloak rows against its 1,000-user import —
-  the 100k seeding ladder is Issuerd-only because it doubles as the
-  provisioning-rate measurement).
+  `password_grant`, and `auth_code_flow` were measured against this 113,327-user
+  database (the Keycloak rows against its 1,000-user import — the 100k seeding
+  ladder is Issuerd-only because it doubles as the provisioning-rate measurement).
 
 ## 8. Sizing guide (from the measurements above)
 
 | Deployment | App container | PostgreSQL | Sustains (measured at that tier) |
 |---|---|---|---|
-| dev / edge | 1 CPU / 512 MiB | 1–2 CPU / 1 GiB | 73 logins/s · 860 cc/s · 7.3k userinfo/s · 188 CIBA cycles/s |
-| standard | 2 CPU / 1 GiB | 2 CPU / 2 GiB | 129 logins/s · 1.6k cc/s · 14k userinfo/s · 285 CIBA cycles/s |
-| high-volume | 4 CPU / 2 GiB | ≥4 CPU only for write-heavy CIBA/provisioning (reads are app-bound) | 222 logins/s · 3.4k cc/s · 26.3k userinfo/s · 446 CIBA cycles/s |
+| dev / edge | 1 CPU / 512 MiB | 1–2 CPU / 1 GiB | 94 logins/s · 2.49k cc/s · 16.7k userinfo/s · 344 CIBA cycles/s |
+| standard | 2 CPU / 1 GiB | 2 CPU / 2 GiB | 155 logins/s · 2.78k cc/s · 28.5k userinfo/s · 347 CIBA cycles/s |
+| high-volume | 4 CPU / 2 GiB | ≥4 CPU for write-heavy deployments | 264 logins/s · 2.73k cc/s · 52.0k userinfo/s · 341 CIBA cycles/s |
 
-RAM headroom is generous: at the medium tier the app peaked at 158 MiB (bulk
-provisioning; ≤121 MiB on every other scenario), and even at the large tier the
-worst peak was 271 MiB against the 2 GiB limit — the 512 MiB small-tier limit is
-mostly margin. Disk: §6.4. Multi-node horizontal scaling (shared PostgreSQL +
-Redis, signing keys in storage) is covered in [CLUSTERING.md](/clustering/).
+RAM headroom is comfortable at these tiers: the medium-tier app peaked at 288.7 MiB
+against a 1 GiB limit, and the large-tier app peaked at 386.3 MiB against 2 GiB.
+Disk: §6.4. Multi-node horizontal scaling (shared PostgreSQL + Redis, signing keys
+in storage) is covered in [CLUSTERING.md](/clustering/); single-host k6 results do
+not by themselves prove linear multi-node scaling.
 
 ---
 
