@@ -101,7 +101,7 @@ These documents live outside `docs/` but are part of the operational picture:
 
 | Document | Purpose |
 |---|---|
-| [README.md](https://github.com/issuerd/issuerd/blob/main/README.md) | Project overview, feature list, standards coverage, quickstart. |
+| [README.md](https://github.com/issuerd/issuerd/blob/main/README.md) | Project overview, key differentiators, conformance summary, and quickstart. |
 | [ARCHITECTURE.md](https://github.com/issuerd/issuerd/blob/main/ARCHITECTURE.md) | High-level design and module contracts. |
 | [CHANGELOG.md](https://github.com/issuerd/issuerd/blob/main/CHANGELOG.md) | Project changelog and release history. |
 | [tests/KEYCLOAK_DIFFS.md](https://github.com/issuerd/issuerd/blob/main/tests/KEYCLOAK_DIFFS.md) | Every deliberate behavioral divergence from Keycloak 24. |
