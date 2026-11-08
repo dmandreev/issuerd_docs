@@ -65,7 +65,7 @@ Depending on your role, you will typically read the set in this order:
 
 | Document | What it covers |
 |---|---|
-| [MCP server](/mcp-server/) | The realm-scoped external MCP endpoint: 67 curated read/write/account/strict tools, three read-only resources, exact operation-bound CIBA, resource provenance, DPoP by default, dual-era stateless transport, and real TypeScript/`rmcp` acceptance rigs. |
+| [MCP server](/mcp-server/) | The realm-scoped external MCP endpoint: 71 curated read/write/account/strict tools, three read-only resources, exact operation-bound CIBA, resource provenance, DPoP by default, dual-era stateless transport, and real TypeScript/`rmcp` acceptance rigs. |
 | [Agentic IAM: MCP tool calls with DPoP and token exchange](/agentic-iam-mcp/) | Securing AI-agent tool calls end to end and governing non-human identities: DPoP sender-constraining (`cnf.jkt`, single-use `jti` replay cache), RFC 8693 audience/scope attenuation per call (per-tool scoped credentials), the resource-server enforcement checklist, a live failure matrix, and the recorded MCP demo. |
 | [Human step-up approval with CIBA](/ciba-step-up/) | Client-Initiated Backchannel Authentication (poll mode) as the human-in-the-loop for privileged agent actions: endpoints and parameters, binding messages, DPoP-bound step-up tokens, the step-up configuration pattern, and the recorded refund-approval demo. |
 | [Runnable example: `examples/agentic-mcp/`](https://github.com/issuerd/issuerd/blob/main/examples/agentic-mcp/) | The external downstream-agent scenario as a self-contained docker compose stack (chat agent + MCP server + PostgreSQL RLS): `docker compose up -d`, sign in as alice/changeme, and watch every protocol step in the security-trace panel. |
@@ -92,7 +92,7 @@ Depending on your role, you will typically read the set in this order:
 |---|---|
 | [Security](/security/) | Hardening: TLS and proxy baseline, signing-key rotation, password policies, brute-force protection, MFA operations (TOTP, WebAuthn, email codes), session and token hardening, admin-surface hygiene. |
 | [Monitoring](/monitoring/) | `/health` and `/ready` probes, Prometheus metrics, logging and request correlation, login events and admin events (querying, retention, auditing). |
-| [Backup, restore, and upgrade](/backup-and-upgrade/) | Where state lives, PostgreSQL and JSON-snapshot backup/restore procedures, schema migrations, single-node and rolling cluster upgrades, rollback rules, and a disaster-recovery skeleton. |
+| [Backup, restore, and upgrade](/backup-and-upgrade/) | Where state lives, PostgreSQL, SQLite, and JSON-snapshot backup/restore procedures, schema migrations, single-node and rolling cluster upgrades, rollback rules, and a disaster-recovery skeleton. |
 | [Troubleshooting](/troubleshooting/) | Symptom → cause → fix for startup, login flow, token, email, federation, brokering, and cluster problems, plus how to gather diagnostics and file a useful bug report. |
 
 ## Related references

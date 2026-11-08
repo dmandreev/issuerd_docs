@@ -1,10 +1,10 @@
 ---
 title: "MCP server"
-description: "Issuerd exposes a realm-scoped Model Context Protocol (MCP) server for external agent-native administration. The current surface has 67 curated tools across read-only administration, reversible…"
+description: "Issuerd exposes a realm-scoped Model Context Protocol (MCP) server for external agent-native administration. The current surface has 71 curated tools across read-only administration, reversible…"
 ---
 
 Issuerd exposes a realm-scoped Model Context Protocol (MCP) server for external
-agent-native administration. The current surface has 67 curated tools across
+agent-native administration. The current surface has 71 curated tools across
 read-only administration, reversible admin writes, account self-service, and
 strict operation-bound actions, plus three read-only resources. There is no
 built-in chat, no LLM provider, and no token passthrough to another API.
@@ -77,10 +77,13 @@ or invocation allowance.
 | `idp_list` | `mcp:read` | `view-realm`, `manage-realm` | Identity providers with sensitive configuration omitted |
 | `idp_get` | `mcp:read` | `view-realm`, `manage-realm` | Identity provider by alias with sensitive configuration omitted |
 | `flows_list` | `mcp:read` | `view-realm`, `manage-realm` | Flows and stages without authenticator configuration |
-| `users_create` | `mcp:write` | `manage-users` | Create a user without credentials |
-| `users_update` | `mcp:write` | `manage-users` | Profile and safe attributes; enabled state is separate |
+| `users_create` | `mcp:write` | `manage-users` | Create a user with profile and registered required actions, without credentials |
+| `users_update` | `mcp:write` | `manage-users` | Profile, registered required actions, and safe attributes; enabled state is separate |
 | `users_set_enabled` | `mcp:write` | `manage-users` | Enable or disable a user |
+| `users_clear_lockout` | `mcp:write` | `manage-users` | Clear brute-force failures and lockouts across all source IPs |
 | `users_send_actions_email` | `mcp:write` | `manage-users` | Send the existing required-action email |
+| `users_request_password_reset` | `mcp:write` | `manage-users` | Send only the signed `UPDATE_PASSWORD` action link; no password input/output |
+| `users_update_credential_label` | `mcp:write` | `manage-users` | Rename a credential without exposing material; empty `userLabel` clears the label |
 | `users_revoke_sessions` | `mcp:write` | `manage-users` **and** `manage-realm` | Revoke one or all user sessions |
 | `users_add_to_group` / `users_remove_from_group` | `mcp:write` | `manage-users` | Reversible group membership changes |
 | `users_assign_role` / `users_unassign_role` | `mcp:write` | `manage-users` | Realm/client role mappings |
@@ -104,6 +107,7 @@ or invocation allowance.
 | `me_totp_enroll` | `openid` | self only | Same-origin TOTP enrollment link only |
 | `me_webauthn_register` | `openid` | self only | Same-origin WebAuthn registration link only |
 | `users_delete` | `mcp:write` + fresh approval | `manage-users` | Delete one exact user and expected state |
+| `users_remove_second_factor` | `mcp:write` + fresh approval | `manage-users` | Remove one exact TOTP/HOTP/second-factor WebAuthn credential with unchanged-set preconditions |
 | `groups_delete` | `mcp:write` + fresh approval | `manage-realm` | Delete one exact group and expected state |
 | `roles_delete` | `mcp:write` + fresh approval | `manage-realm` | Delete one exact realm role and expected state |
 | `clients_delete` | `mcp:write` + fresh approval | `manage-clients` | Delete one exact client and expected state |
@@ -118,6 +122,34 @@ or invocation allowance.
 | `realm_delete` | `mcp:write` + fresh approval | `manage-realm` | Delete the current realm after exact name confirmation |
 | `me_totp_delete` | `openid` + fresh approval | self only | Delete own TOTP enrollment with exact expected credentials |
 | `me_webauthn_delete` | `openid` + fresh approval | self only | Delete one owned WebAuthn credential |
+
+### Operational user administration
+
+Typical support workflows compose a small set of tools rather than exposing the
+whole Admin API:
+
+- **Onboard a user:** `users_create`, then `users_request_password_reset` or
+  `users_send_actions_email`. Create/update accepts only registered required
+  action IDs, rejects duplicates, and never accepts password or credential
+  payloads. Group and role changes remain separate, explicitly authorized calls.
+- **"I cannot log in":** inspect `users_get` and `attack_detection_status`;
+  re-enable with `users_set_enabled`, clear brute-force state with
+  `users_clear_lockout`, and revoke compromised sessions with
+  `users_revoke_sessions`. Clearing lockout does not enable a disabled user or
+  reset a forgotten password.
+- **"I lost my phone / security key":** inspect `users_get_credentials`, then
+  remove exactly the affected second factor with `users_remove_second_factor`.
+  This is a strict operation with fresh approval and unchanged user, realm, and
+  credential-set preconditions. Password, WebAuthn Passwordless, and unknown
+  credentials are rejected as removal targets. A supported primary sign-in
+  method must remain: an active password, configured LDAP/Kerberos federation,
+  an enabled broker link, or a bound email-code browser flow with an email address. Existing
+  non-UUID credential IDs are accepted where the backend permits them. The tool
+  never returns secret material. Use
+  `users_update_credential_label` only for device naming, not as a security
+  reset.
+- **Offboard:** disable the user, revoke every session, then use `users_delete`
+  only when deletion is actually required and separately approved.
 
 User/group role assignment and unassignment remain ordinary T2 writes for
 non-administrative roles. They become strict operations whenever the target
@@ -141,7 +173,10 @@ annotations drive external-client confirmation UX; they are not a server-side
 approval substitute. Each call invokes the existing Admin application handler,
 so validation, audit events, required-action email, logout notification, and
 cache invalidation match the Admin API. Secret-bearing attributes are rejected,
-and client creation can never set `admin_api_access`.
+and client creation can never set `admin_api_access`. Password-reset lifespans
+are positive and capped at 365 days. Generic action-email keeps all previously
+valid lifespans; both paths reject timestamp/cache-duration overflow before
+token creation or any SMTP side effect.
 
 `tools/list` is filtered by the caller's actual scope and roles; every
 `tools/call` repeats the same checks. Unknown and under-authorized well-formed
@@ -202,7 +237,7 @@ rather than granting general write authority:
 5. The client retries the original tool with byte-equivalent typed arguments.
    The server compares every operation, subject, client, realm, resource, key,
    hash, and precondition binding, then atomically records the grant state,
-   target mutation, and redacted result. PostgreSQL, in-memory, and JSON
+   target mutation, and redacted result. PostgreSQL, SQLite, in-memory, and JSON
    backends implement the same conditional transaction contract.
 
 The single-purpose token cannot call unrelated tools or UserInfo, Account, or
@@ -382,8 +417,9 @@ Run exact-operation CIBA across three nodes sharing PostgreSQL and Redis:
 The public native profile completes authorization-code issuance and all 23
 legacy admin read tools in legacy and modern modes. The confidential profile
 uses `client_secret_basic`, PKCE S256, and one SDK `DpopSession` to read all
-three resources, perform a reversible write, approve an exact `users_delete`,
-reject changed arguments and unrelated use, and reconcile an exact replay.
+three resources, update a user, clear lockout, relabel a credential, approve an
+exact second-factor removal and an exact `users_delete` independently, reject
+changed arguments and unrelated use, and reconcile exact replays.
 The cluster runner requires approval on node 2, polling on node 3, and final
 execution on node 1 without changing the canonical URL or DPoP key. Compose
 runners remove their own projects and volumes on exit. See

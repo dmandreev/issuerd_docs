@@ -5,6 +5,8 @@ description: "From a fresh checkout to a verified access token in about five min
 
 From a fresh checkout to a verified access token in about five minutes. This guide walks a system operator through the two supported ways to run Issuerd locally — the Docker demo stack (one command, zero prerequisites beyond Docker) and a build from source — explains what happens on first boot, verifies the installation end to end, and finishes with the minimum hardening steps before going further. Production topology, TLS, and externalized configuration are covered in [deployment](/deployment/) and [security](/security/); this guide is deliberately local and hands-on.
 
+To explore Issuerd before installing anything, use the [public hosted demo](https://demo.issuerd.org). It contains synthetic data only, is best-effort, and may be reset. Do not enter real passwords or sensitive data.
+
 ## Contents
 
 - [What you will have at the end](#what-you-will-have-at-the-end)

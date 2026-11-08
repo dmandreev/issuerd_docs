@@ -41,14 +41,14 @@ That is a useful boundary: ordinary work remains usable, while high-impact autho
 
 ## A curated surface with explicit risk tiers
 
-The endpoint is `POST /realms/{realm}/mcp`, mounted only when `[mcp].enabled` is true. It uses stateless Streamable HTTP, exact same-realm resource provenance, and DPoP by default. The current surface contains **67 curated tools** and **three redacted read-only resources**:
+The endpoint is `POST /realms/{realm}/mcp`, mounted only when `[mcp].enabled` is true. It uses stateless Streamable HTTP, exact same-realm resource provenance, and DPoP by default. The current surface contains **71 curated tools** and **three redacted read-only resources**:
 
 | Surface | Count | Initiation and execution policy |
 |---|---:|---|
 | Administrative reads | 23 | `mcp:read` plus the corresponding view/manage role |
-| Reversible administrative writes | 19 | `mcp:write` plus the corresponding manage role; they invoke the existing Admin application handlers |
+| Reversible administrative writes | 22 | `mcp:write` plus the corresponding manage role; they invoke the existing Admin application handlers |
 | Account self-service | 10 | `openid` and strict subject ownership |
-| Strict operations | 15 | Ordinary scope plus role/self-scope at initiation, then a fresh exact-operation grant at execution |
+| Strict operations | 16 | Ordinary scope plus role/self-scope at initiation, then a fresh exact-operation grant at execution |
 
 Role assignment is not a loophole around the strict tier. Assigning an administrative role, changing administrative composites, or adding a user to a group with an administrative effective closure becomes a strict operation even when the base tool is an ordinary write.
 
@@ -97,7 +97,7 @@ The acceptance example uses the official TypeScript SDK, not a mocked MCP client
 ./examples/mcp-admin/scripts/e2e-step-up-cluster.sh
 ```
 
-The local and Compose runs cover real authorization-code + PKCE + DPoP issuance, all 23 administrative read tools in legacy and modern protocol modes, three redacted resource reads, an ordinary `users_update`, and a strict `users_delete`. The strict evidence includes fresh authentication, rejected changed arguments and unrelated calls, one completed deletion, reconciled exact replay, and `invalid_grant` when the consumed CIBA request is polled again.
+The local and Compose runs cover real authorization-code + PKCE + DPoP issuance, all 23 administrative read tools in legacy and modern protocol modes, three redacted resource reads, an ordinary `users_update`, lockout clearing, and credential relabeling. Independent strict operations remove a second factor and then delete the user, with fresh authentication for each. The evidence includes rejected changed arguments, unrelated calls, and cross-grant use, reconciled exact replays, and `invalid_grant` when each consumed CIBA request is polled again.
 
 The three-node runner deliberately separates the flow:
 
