@@ -18,15 +18,16 @@ This document is the operational reference for protecting an Issuerd deployment:
 
 ## Where state lives
 
-Issuerd separates **durable** state (PostgreSQL or a JSON snapshot file) from **ephemeral** state (Redis or the in-process cache). Understanding this split is the key to every backup and recovery decision: only durable state needs backups.
+Issuerd separates **durable** state (PostgreSQL, SQLite, or a JSON snapshot file) from **ephemeral** state (Redis or the in-process cache). Understanding this split is the key to every backup and recovery decision: only durable state needs backups.
 
 | State | Where | Backup needed? |
 |---|---|---|
-| Realms, users, credentials, clients, roles, groups, client scopes, consents, identity-provider configs and links, flow configs | PostgreSQL | **Yes** |
-| SSO sessions (`user_sessions`, `client_sessions`) | PostgreSQL | **Yes** — restoring the DB restores logged-in sessions |
-| **Signing keys** (`signing_keys` table: private DER + public JWK) | PostgreSQL | **Yes** — this is what keeps issued tokens valid across restores. With `[crypto.key_encryption]` enabled the rows are ciphertext; the **KEK must be backed up separately** (it is never in the DB — see below) |
-| Login/admin event audit trail (`events`, `admin_events`) | PostgreSQL | **Yes** (compliance data) |
-| Provision markers (`provision_markers`) | PostgreSQL | **Yes** (comes along automatically) |
+| Realms, users, credentials, clients, roles, groups, client scopes, consents, identity-provider configs and links, flow configs | PostgreSQL or SQLite | **Yes** |
+| SSO sessions (`user_sessions`, `client_sessions`) | PostgreSQL or SQLite | **Yes** — restoring the DB restores logged-in sessions |
+| **Signing keys** (`signing_keys` table: private DER + public JWK) | PostgreSQL or SQLite | **Yes** — this is what keeps issued tokens valid across restores. With `[crypto.key_encryption]` enabled on PostgreSQL the rows are ciphertext; the **KEK must be backed up separately** (it is never in the DB — see below) |
+| Login/admin event audit trail (`events`, `admin_events`) | PostgreSQL or SQLite | **Yes** (compliance data) |
+| Webhook subscriptions and outbox (`webhook_subscriptions`, `webhook_deliveries`) | PostgreSQL or SQLite | **Yes** — signing secrets and pending event payloads; restoring can repeat an in-flight delivery |
+| Provision markers (`provision_markers`) | PostgreSQL or SQLite | **Yes** (comes along automatically) |
 | Auth codes, pending login/consent/registration/action flows, device and CIBA state, PAR requests, revocation blocklist, login-failure counters, registration access tokens | Redis | **No** — ephemeral by design |
 | Access/ID/refresh tokens | Nowhere — self-contained JWTs | No — validated statelessly against the JWKS built from the stored signing keys |
 | Metrics (`/metrics`) | Per node, in memory | No |
@@ -72,7 +73,7 @@ All Redis content is short-lived runtime state. The key prefixes below are defin
 - Login-failure counters — brute-force lockouts reset.
 - Registration access tokens of dynamically registered clients — those clients can no longer read/update/delete their own registration through the RFC 7592 endpoint.
 
-**What a Redis wipe does NOT lose:** realms, users, clients, SSO sessions (refresh tokens keep working), issued JWTs (validated statelessly), signing keys, audit events. The demo stack runs Redis with `--maxmemory-policy noeviction` and no persistence (`docker-compose.yml`), so these entries cannot be evicted selectively under memory pressure; security-critical writes fail closed when the cap is reached.
+**What a Redis wipe does NOT lose:** realms, users, clients, SSO sessions (refresh tokens keep working), issued JWTs (validated statelessly), signing keys, audit events, webhook subscriptions, or their outbox deliveries. The demo stack runs Redis with `--maxmemory-policy noeviction` and no persistence (`docker-compose.yml`), so these entries cannot be evicted selectively under memory pressure; security-critical writes fail closed when the cap is reached.
 
 > **Warning:** because single-token revocation entries are lost on a Redis wipe, use the realm-wide `notBefore` cutoff when a revocation must survive a cache flush — set it with `PUT /admin/realms/{realm}` (tokens issued before the cutoff are rejected). The cutoff itself is durable realm state in PostgreSQL.
 
@@ -81,9 +82,13 @@ All Redis content is short-lived runtime state. The key prefixes below are defin
 Both are development/evaluation modes, so their backup story is deliberately short:
 
 - **In-memory** (no `[storage]` section): all state — including signing keys — is generated per boot and lost on restart. There is nothing to back up.
-- **JSON-file** (`[storage.json_file] path = "..."`): the entire durable state — realms, users, sessions, events, and signing keys — lives in the one snapshot file. Back it up by stopping the daemon and copying that file (writes rewrite the whole file non-atomically — never copy it live); restore by copying it back to the configured path (relative paths resolve against the daemon's working directory) and starting the daemon.
+- **JSON-file** (`[storage.json_file] path = "..."`): the entire durable state — realms, users, sessions, events, signing keys, webhook subscriptions, and outbox deliveries — lives in the one snapshot file, including webhook signing secrets and pending payloads. Back it up by stopping the daemon and copying that file (writes rewrite the whole file non-atomically — never copy it live); restore by copying it back to the configured path (relative paths resolve against the daemon's working directory) and starting the daemon.
 
-Both backends trigger the automatic master-realm bootstrap on first start (with PostgreSQL the master realm must come from the provision file — see [provisioning.md](/provisioning/)).
+### SQLite backend
+
+All durable state lives in the single file selected by `[storage.sqlite] path`; active operation also uses `-wal` and `-shm` sidecars. Use the online `VACUUM INTO` procedure below for a consistent one-file backup, or stop the daemon before copying files. Signing keys are plaintext in this file because envelope encryption is PostgreSQL-only, so filesystem permissions are part of the backup security boundary.
+
+In-memory, JSON-file, and SQLite backends trigger the automatic master-realm bootstrap on first start (with PostgreSQL the master realm must come from the provision file — see [provisioning.md](/provisioning/)).
 
 ### Files to back up on every node
 
@@ -122,6 +127,22 @@ For the Docker demo stack (its PostgreSQL publishes no host port), run the dump 
 ```bash
 docker compose exec -T postgres pg_dump -U issuerd -Fc issuerd > issuerd-$(date +%F).dump
 ```
+
+### SQLite (online, single-node)
+
+`VACUUM INTO` writes a transactionally consistent standalone database while the daemon keeps running. The destination must not already exist; use a new dated path each time. Run `sqlite3` on the database host — the distroless Issuerd image intentionally has no shell or SQLite CLI:
+
+```bash
+install -d -m 0750 /var/backups/issuerd
+umask 077
+sqlite3 /var/lib/issuerd/issuerd.db \
+  "VACUUM INTO '/var/backups/issuerd/issuerd-2026-11-05.db';"
+chmod 0600 /var/backups/issuerd/issuerd-2026-11-05.db
+sqlite3 /var/backups/issuerd/issuerd-2026-11-05.db \
+  "PRAGMA integrity_check; PRAGMA foreign_key_check;"
+```
+
+`integrity_check` must print `ok`, and `foreign_key_check` must print no rows. The backup needs no `-wal` or `-shm` files. For an offline backup instead, stop the daemon, run `PRAGMA wal_checkpoint(TRUNCATE);` against the live file, then copy only the main file with preserved permissions.
 
 ### Configuration and assets
 
@@ -193,6 +214,23 @@ consequences for backup and recovery invert the usual assumptions:
 3. Start the daemon. Boot applies any pending schema migrations automatically (see below); on a dump from the same version none are pending. The sqlx migration ledger and the `provision_markers` table are part of the dump, so already-applied migrations are skipped and provisioning does **not** re-run against restored data. If the dump holds encrypted signing keys (`[crypto.key_encryption]` was enabled), the **same KEK section must be configured** or boot fails closed — see "Signing-key encryption KEK" above.
 4. If you restored under a different database name and are satisfied, you can later drop the old database; alternatively restore over the original name after dropping/recreating it.
 
+### SQLite restore
+
+Restore to a new path first so the current file remains available for rollback:
+
+1. Stop the daemon and copy the backup to a new file owned by the service account:
+   ```bash
+   systemctl stop issuerd
+   install -o issuerd -g issuerd -m 0640 \
+     /var/backups/issuerd/issuerd-2026-11-05.db \
+     /var/lib/issuerd/issuerd-restored.db
+   sqlite3 /var/lib/issuerd/issuerd-restored.db \
+     "PRAGMA integrity_check; PRAGMA foreign_key_check;"
+   ```
+   Require `ok` and no foreign-key rows before continuing.
+2. Set `[storage.sqlite] path = "/var/lib/issuerd/issuerd-restored.db"` and start the daemon. Its migration ledger and provision markers come from the backup, so only new migrations run and provisioning is not repeated.
+3. After verification, switch back to the original filename during another stopped maintenance window, or keep the restored path. Never copy a live SQLite file directly over a running daemon's database or leave stale `-wal`/`-shm` files from a different generation.
+
 ### Post-restore verification checklist
 
 ```bash
@@ -217,11 +255,11 @@ Because signing keys are restored with the database, tokens and SSO sessions iss
 
 ## Schema migrations
 
-Issuerd manages its PostgreSQL schema with embedded, numbered SQL migrations in `crates/issuerd-storage/migrations/` (`001_initial.sql` … currently through `017_signing_key_encryption.sql`):
+Issuerd manages PostgreSQL with embedded, numbered SQL migrations in `crates/issuerd-storage/migrations/` and SQLite with an independent, mirrored sequence in `crates/issuerd-storage/migrations-sqlite/` (PostgreSQL through `019_webhooks.sql`, SQLite through `020_webhooks.sql`):
 
-- Migrations are compiled into the binary and **applied automatically at startup** (`sqlx::migrate!`, invoked from `ServerState::from_config` in `crates/issuerd-server/src/state.rs` and from `PostgresStorage::run_migrations`). The `issuerd provision` CLI subcommand runs them too before applying a provision file.
+- Migrations are compiled into the binary and **applied automatically at startup** (`sqlx::migrate!`, invoked from `ServerState::from_config` and each SQL backend's `run_migrations`). The `issuerd provision` CLI subcommand runs them too before applying a provision file.
 - Applied migrations are recorded in the database's sqlx migration ledger, so restarts and subsequent boots only run what is new.
-- After the SQL migrations, an idempotent data backfill runs on every boot: built-in client scopes and per-client scope assignments, built-in browser/registration flows, and pairwise sector keys are seeded into realms that predate them (`crates/issuerd-storage/src/seed.rs`).
+- After the SQL migrations, idempotent data backfills run on every boot: built-in client scopes and per-client scope assignments, built-in browser/registration flows, and pairwise sector keys are seeded into realms that predate them (`crates/issuerd-storage/src/seed.rs`). SQLite also normalizes the migration-019 username/email search columns in place without changing other user fields.
 - The JSON-file backend needs no schema migrations; loading an older snapshot triggers the equivalent idempotent data backfill and persists the result.
 
 **Append-only discipline (project policy):** existing migration files are immutable — never edited, renamed, or reordered. Schema changes ship as new, sequentially numbered files, and destructive changes follow expand-and-contract (add the new shape, migrate data, drop the old shape in a later migration). Combined with the additive-only API policy this means:
@@ -234,13 +272,13 @@ Check the version before and after: `issuerd --version`, and the startup log lin
 
 ### Single-node runbook
 
-1. **Back up.** Take a fresh `pg_dump` (plus config/themes archive) — this is also your rollback anchor, see [Rollback](#rollback).
+1. **Back up.** Take a fresh `pg_dump` or SQLite `VACUUM INTO` backup (plus config/themes archive) — this is also your rollback anchor, see [Rollback](#rollback).
 2. **Stop the daemon.** Send SIGTERM (`systemctl stop issuerd`); the server shuts down gracefully — when serving TLS directly it allows up to 30 seconds for in-flight requests, while plain HTTP drains them without a hard timeout.
 3. **Replace the binary or image.** Install the new package, or bump the image tag and recreate the container (for the compose demo stack: `docker compose pull && docker compose up -d`).
 4. **Start.** Boot applies pending migrations automatically; expect the migration log lines on the first start.
 5. **Verify** with the [post-restore checklist](#post-restore-verification-checklist): `/ready`, JWKS, a test login, the admin console.
 
-Outstanding tokens and sessions survive the upgrade: signing keys are read back from PostgreSQL, so the new binary signs and validates with the same keys.
+Outstanding tokens and sessions survive the upgrade: signing keys are read back from the durable SQL backend, so the new binary signs and validates with the same keys.
 
 ### Cluster rolling upgrades
 
