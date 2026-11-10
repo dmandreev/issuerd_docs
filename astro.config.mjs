@@ -82,6 +82,7 @@ export default defineConfig({
           items: [
             { slug: 'administration' },
             { slug: 'client-integration', label: 'Client integration' },
+            { slug: 'webhooks', label: 'Webhook event listeners' },
           ],
         },
         {

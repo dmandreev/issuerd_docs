@@ -1,11 +1,11 @@
 ---
 title: "Provisioning"
-description: "This document describes Issuerd's declarative provisioning: a YAML, TOML, or JSON file (\"provision file\") that seeds realms, roles, groups, clients, users, identity providers, and authentication…"
+description: "This document describes Issuerd's declarative provisioning: a YAML, TOML, or JSON file (\"provision file\") that seeds realms, roles, groups, clients, users, identity providers, webhook…"
 ---
 
 This document describes Issuerd's declarative provisioning: a YAML, TOML, or JSON
 file ("provision file") that seeds realms, roles, groups, clients, users, identity
-providers, and authentication flow configs into a fresh — or partially seeded —
+providers, webhook subscriptions, and authentication flow configs into a fresh — or partially seeded —
 deployment. It is written for system operators who install and maintain Issuerd.
 For the server configuration file that points at a provision file, see
 [configuration.md](/configuration/); for a guided first boot, see
@@ -73,7 +73,7 @@ provision = "provision.yaml"   # relative paths resolve against the working dire
 
 During startup (in `ServerState::from_config`, `crates/issuerd-server/src/state.rs`),
 after storage initialization and after the automatic master-realm bootstrap (for the
-in-memory/JSON backends), the daemon loads and applies the file once. On subsequent
+in-memory/JSON/SQLite backends), the daemon loads and applies the file once. On subsequent
 restarts an `applied` marker causes the file to be ignored entirely — leaving
 the `provision` key in place is harmless. Failed attempts clear their in-progress
 marker and are eligible to run again after the error is fixed.
@@ -94,8 +94,8 @@ issuerd provision -c issuerd.toml --file provision.yaml
 The command reads the server configuration only to learn which storage to connect
 to (`-c` defaults to `issuerd.toml` in the working directory), then:
 
-1. Connects to the configured storage — for PostgreSQL it also runs pending schema
-   migrations first (`src/main.rs`).
+1. Connects to the configured storage — for PostgreSQL and SQLite it also runs pending
+   schema migrations first (`src/main.rs`).
 2. Applies the provision file exactly once (same marker mechanism as the daemon).
 3. Exits. Unlike the daemon, errors propagate: the process exits non-zero, so it is
    safe to gate deployments on it in scripts and CI.
@@ -160,7 +160,7 @@ Entities are applied in a fixed order regardless of how the lists are arranged i
 the file (`crates/issuerd-server/src/provisioner.rs`):
 
 ```
-realms → roles → clients → groups → users → identity_providers → flow_configs
+realms → roles → clients → groups → users → identity_providers → webhooks → flow_configs
 ```
 
 Groups are applied **after clients** so that group `client_roles` mappings can
@@ -168,7 +168,8 @@ resolve the clients they reference.
 
 Every entity is skipped with a log warning if it already exists — realms by name,
 roles and groups by name within the realm, clients by `client_id` within the realm,
-users by username, identity providers by alias, flow configs by alias. Provisioning
+users by username, identity providers by alias, webhook subscriptions by URL,
+flow configs by alias. Provisioning
 **creates missing entities only; it never updates existing ones.**
 
 ### Built-in clients per realm
@@ -412,6 +413,35 @@ identity_providers:
       priority: "1"
 ```
 
+### webhooks
+
+Declares realm webhook subscriptions. The secret is required and is used for
+HMAC-SHA256 signatures; it is never returned by the Admin API or logged. See
+[webhooks.md](/webhooks/) for the payload, filters, retry, and delivery model.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `realm` | string | required | Owning realm name. |
+| `url` | string | required | Absolute HTTPS endpoint, without userinfo or a fragment. |
+| `secret` | string | required | Shared secret for HMAC-SHA256. Supply it via `${ENV}` rather than committing it. |
+| `enabled` | bool | `true` | Enables delivery independently of local audit retention. |
+| `event_types` | list | `["*"]` | Filters such as `USER.LOGIN`, `USER.REGISTER`, or `ADMIN.USER.CREATE`. |
+| `include_representation` | bool | `false` | Includes admin representation only when the realm and subscription both allow it. |
+
+```yaml
+webhooks:
+  - realm: myrealm
+    url: ${ISSUERD_WEBHOOK_URL}
+    secret: ${ISSUERD_WEBHOOK_SECRET}
+    enabled: true
+    event_types: [USER.LOGIN, USER.REGISTER, ADMIN.USER.CREATE]
+    include_representation: false
+```
+
+Provisioning skips an existing subscription with the same URL. It creates missing
+subscriptions only and never rotates an existing secret or changes filters;
+perform those changes through the Admin API.
+
 ### flow_configs
 
 Registers a custom authentication flow. Built-in flows (browser, registration) are
@@ -463,7 +493,7 @@ config) use the Admin API.
 
 The automatic master-realm bootstrap (`bootstrap_master_realm` in
 `crates/issuerd-server/src/state.rs`) runs at daemon startup **only** when the storage
-backend is in-memory or JSON-file **and** no realms exist yet. It creates:
+backend is in-memory, JSON-file, or SQLite **and** no realms exist yet. It creates:
 
 - the `master` realm with user `admin`, password `bootstrap_admin_password` from the
   server config (or `ISSUERD_BOOTSTRAP_ADMIN_PASSWORD`) — unset or empty ⇒ a random
@@ -473,7 +503,7 @@ backend is in-memory or JSON-file **and** no realms exist yet. It creates:
   `admin`,
 - the built-in `admin-cli` and `account-console` clients.
 
-It runs **before** the provisioner, so with the in-memory/JSON backends a provision
+It runs **before** the provisioner, so with the in-memory/JSON/SQLite backends a provision
 file that also defines `master` finds the realm (and possibly the `admin` user)
 already present and skips those entries, while still applying any remaining roles,
 clients, and users from the file.
@@ -491,10 +521,10 @@ If the daemon is already running against such a database, fix it out-of-band wit
 ## Re-runs and idempotency
 
 The `marker:` key (default `"default"`) names a record in storage that tracks
-whether the file has been applied. With PostgreSQL the marker lives in the
-`provision_markers` table (`crates/issuerd-storage/migrations/004_provision_markers.sql`);
-with JSON-file storage it is part of the snapshot; with in-memory storage it lives
-and dies with the process.
+whether the file has been applied. PostgreSQL and SQLite keep it in the
+`provision_markers` table (their respective `004_provision_markers.sql` migrations),
+with an atomic insert-if-absent claim; with JSON-file storage it is part of the
+snapshot; with in-memory storage it lives and dies with the process.
 
 - **Marker claimed before applying, completed only after success.** The provisioner
   atomically claims an `in_progress` marker, then applies the entities and records
