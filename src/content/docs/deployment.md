@@ -21,11 +21,24 @@ Issuerd is a single `issuerd` binary whose state model decides the topology. Dur
 
 ### Development / evaluation (single node, no dependencies)
 
-With no `[storage]` section the daemon uses the in-memory backend; `[storage.json_file]` persists the full state to a JSON snapshot. Both are single-node modes for development, evaluation, and demos — never production. They are covered in [getting-started.md](/getting-started/) and the [configuration.md](/configuration/) storage reference; the rest of this guide assumes PostgreSQL + Redis.
+With no `[storage]` section the daemon uses the in-memory backend; `[storage.json_file]` persists the full state to a JSON snapshot. Both are single-node modes for development, evaluation, and demos — never production. They are covered in [getting-started.md](/getting-started/) and the [configuration.md](/configuration/) storage reference.
+
+### Single-node production (SQLite, no external DB)
+
+For an edge site, branch office, or homelab with one daemon and no database service, use embedded SQLite:
+
+```toml
+[storage.sqlite]
+path = "/var/lib/issuerd/issuerd.db"
+```
+
+SQLite stores every durable entity, including sessions and signing keys, and runs migrations at boot. WAL mode and `synchronous=FULL` provide durable local operation; a fresh file gets the automatic `master` bootstrap. The parent directory must exist and the daemon needs write access to the database and its `-wal`/`-shm` sidecars. Do not put the live database on a network filesystem or start multiple Issuerd processes against it; multi-node requires PostgreSQL. See [backup-and-upgrade.md](/backup-and-upgrade/) for online and offline backups.
+
+Without `redis`, transient authorization/revocation state uses the in-process cache and is lost on restart. Configure a local Redis when that state must survive restarts; it does not make SQLite suitable for multiple nodes.
 
 ### Single-node production (PostgreSQL + Redis)
 
-The baseline production topology is one Issuerd node with:
+The shared-database production topology is one Issuerd node with:
 
 - **PostgreSQL** for all durable state (`[storage.postgres]`). Signing keys live in the shared `signing_keys` table, so tokens and sessions survive restarts and redeploys. Schema migrations run automatically at boot.
 - **Redis** for transient state (`redis = "redis://…"`). The shipped demo and cluster stacks use `--maxmemory 256mb --maxmemory-policy noeviction`, so revocation, rotation, replay, and lockout markers are never silently evicted under memory pressure; security-critical writes fail closed instead. The integration stack enables `--appendonly yes` with a volume. A Redis wipe still drops revocation entries and in-flight flows, so use the durable realm `notBefore` cutoff when revocation must survive it.
@@ -45,7 +58,7 @@ The full multi-node guide — state model, configuration, LB contract, scaling �
 The root `Dockerfile` is the canonical production image. It is a multi-stage build:
 
 1. **Builder** — compiles the embedded web client (`npm ci && npm run generate-api && npm run build` in `webclientsrc/`, regenerated from the committed `openapi.json`) and then the release binary (`cargo auditable build --bin issuerd --release --locked`). The web client is embedded into the binary at compile time (`include_dir!`), so the runtime image contains only the binary plus its shared libraries. The `cargo auditable` wrapper embeds the Cargo dependency tree so image-only SBOM scans (syft) can see the Rust crates.
-2. **Runtime** — a Google **distroless** userland (`gcr.io/distroless/cc-debian13:nonroot`: glibc + OpenSSL 3 + CA certs — no shell, no package manager, non-root uid 65532 by default). The Kerberos GSS-API libraries the binary links for LDAP federation are copied from the builder stage; libpq is not needed (sqlx is a pure-Rust PostgreSQL driver). `EXPOSE 8080`; the entrypoint is `issuerd` with default arguments `daemon -c /etc/issuerd/issuerd.toml`. Container healthchecks should use the binary itself (`issuerd healthcheck --url ...`), since the image ships no curl/wget.
+2. **Runtime** — a Google **distroless** userland (`gcr.io/distroless/cc-debian13:nonroot`: glibc + OpenSSL 3 + CA certs — no shell, no package manager, non-root uid 65532 by default). The Kerberos GSS-API libraries the binary links for LDAP federation are copied from the builder stage; libpq is not needed (sqlx is a pure-Rust PostgreSQL driver), and SQLite is linked statically through sqlx's bundled driver. `EXPOSE 8080`; the entrypoint is `issuerd` with default arguments `daemon -c /etc/issuerd/issuerd.toml`. Container healthchecks should use the binary itself (`issuerd healthcheck --url ...`), since the image ships no curl/wget.
 
 ```bash
 docker build -t issuerd:local .
@@ -171,10 +184,10 @@ A suggested layout for a systemd-managed install:
 | `/etc/issuerd/provision.yaml` | Optional provision file (applied once at first boot) |
 | `/etc/issuerd/issuerd.env` | Secrets/environment overrides (`root:issuerd`, mode `0640`) |
 | `/etc/issuerd/certs/` | PEM certificate/key, only when using direct [`[tls]`](#tls) |
-| `/var/lib/issuerd/` | Working directory: JSON-file storage (if used), any writable state |
+| `/var/lib/issuerd/` | Working directory: SQLite/JSON-file storage (if used), any writable state |
 | `/var/lib/issuerd/themes/` | Login-theme assets, if you use them |
 
-Notes on relative paths: the config file path (`-c`), `tls.cert_path`/`key_path`, `themes.dir`, and `storage.json_file.path` all resolve against the daemon's **working directory**. The systemd unit below pins `WorkingDirectory=/var/lib/issuerd` and uses absolute paths everywhere else. Login-theme assets are read **from disk on every request** (`crates/issuerd-server/src/routes/theme.rs`) — copy the repository's `themes/` directory into the layout (and point `[themes] dir` at it) if you rely on the default login CSS or custom themes.
+Notes on relative paths: the config file path (`-c`), `tls.cert_path`/`key_path`, `themes.dir`, `storage.sqlite.path`, and `storage.json_file.path` all resolve against the daemon's **working directory**. The systemd unit below pins `WorkingDirectory=/var/lib/issuerd` and uses absolute paths everywhere else. Login-theme assets are read **from disk on every request** (`crates/issuerd-server/src/routes/theme.rs`) — copy the repository's `themes/` directory into the layout (and point `[themes] dir` at it) if you rely on the default login CSS or custom themes.
 
 ### systemd unit
 
@@ -327,10 +340,31 @@ Kubernetes deployment is the container image plus the multi-node contract; there
 - **Shutdown:** pods receive SIGTERM and the daemon drains in-flight requests gracefully (a 30-second cap applies when built-in `[tls]` is enabled). Size `terminationGracePeriodSeconds` accordingly.
 - **Metrics** are per-pod — scrape every pod's `/metrics` (see [monitoring.md](/monitoring/)).
 
+## Keycloak realm migration
+
+Use a full realm export made while Keycloak is stopped; `partial-export` is not a credential-complete migration path. The disposable acceptance harness implements the same sequence automatically:
+
+```bash
+# Source side, against a stopped Keycloak 26.7.1 with PostgreSQL running:
+kc.sh export --dir /export --realm migration-lab --users realm_file
+
+# Reusable sanitized-fixture acceptance against a fresh Issuerd target:
+python3 tests/keycloak-migration/run.py \
+  --fixture /secure/path/migration-lab-realm.json \
+  --manifest /secure/path/fixture-manifest.json \
+  --secrets /secure/path/fixture-secrets.json
+```
+
+`fixture-secrets.json` is local-only, mode `0600`, and contains only disposable credentials. Replace masked source confidential-client secrets with fresh target-only values before authentication checks. Do not put production exports, hashes, salts, passwords, tokens, or private keys in CI artifacts. `tests/keycloak-migration/README.md` documents the manifest schema, source oracle, evidence JSON/JUnit, and cleanup.
+
+The Admin API migration endpoint is `POST /admin/realms/{realm}/partialImport?ifResourceExists=OVERWRITE`. It accepts full-export `users` (including Argon2id/PBKDF2 credentials), top-level groups, clients, realm/client roles and assignments, client scopes, all nine supported mapper types, default/optional scope assignments, `scopeMappings`, `clientScopeMappings`, and composites. Relative redirect URIs and web origins resolve against the target `issuer_url`; Keycloak `webOrigins: ["+"]` expands to the deduplicated origins of those resolved redirect URIs. Nested groups, unsupported mapper types, dangling references, ambiguous cross-client composites, non-UUID or duplicate password credential IDs, cross-user or type-incompatible credential collisions, and invalid client or realm-default MCP scope assignments fail before any resource write; they are not silently dropped. Existing `FAIL` conflicts remain non-transactional, while `SKIP` leaves existing resources and assignments unchanged and absent credential fields preserve existing credentials.
+
+For the full real-Keycloak export/oracle/login acceptance, run `python3 tests/keycloak-migration/run.py` with no fixture arguments. Backend selection is available through `--backend in-memory|json-file|sqlite|postgres|postgres-redis`; the last mode verifies a second node on the shared Compose network. Use `--synthetic` only for a local compatible fixture, never as evidence that a real Keycloak export worked. Always verify every enabled user login, wrong-password rejection, required client scopes, and actual UserInfo claims before cutover.
+
 ## Production checklist
 
 - [ ] **`issuer_url` is the public base URL** clients use (e.g. `https://id.example.com`), with the correct scheme/host/port. It is baked into `iss` and discovery; treat it as permanent once realms are in use — changing it later invalidates outstanding tokens, sessions, and stored client configs.
-- [ ] **PostgreSQL storage configured** (`[storage.postgres]`) — durable realms/users/sessions/signing keys; migrations run at boot. **Redis configured** for transient state.
+- [ ] **Durable storage configured** (`[storage.postgres]` for shared/multi-node state or `[storage.sqlite]` for one self-contained node) — realms/users/sessions/signing keys survive restarts and migrations run at boot. **Redis configured** when transient state must survive restarts.
 - [ ] **`cluster.enabled = true`** whenever more than one node serves the same issuer — boot then fails fast on a split-brain configuration. See [CLUSTERING.md](/clustering/).
 - [ ] **TLS end-to-end** — direct `[tls]` or a TLS-terminating proxy with `https:` `issuer_url` and `[proxy].trusted_proxies` listing exactly the proxy subnets.
 - [ ] **`master` realm exists** — provision file applied on the fresh PostgreSQL database (no automatic bootstrap on that backend), and **`admin`/`admin` or any seeded default credentials are rotated or deleted**. Demo content (`alice`/`changeme`, `my-app-secret`) removed.
@@ -340,4 +374,4 @@ Kubernetes deployment is the container image plus the multi-node contract; there
 - [ ] **Realm `ssl_required` reviewed** (`none` / `external` / `all`; default `external`) to match the TLS topology.
 - [ ] **Metrics scraped** — Prometheus pulls `/metrics` from every node; health probes wired to `/health` + `/ready`. See [monitoring.md](/monitoring/).
 - [ ] **Events retention reviewed** per realm: `events_expiration_secs` hides events older than the window from query results (it does not delete rows); actual cleanup is the Admin API wipe endpoints (`DELETE /admin/realms/{realm}/events`, `…/admin-events`) — see [monitoring.md](/monitoring/).
-- [ ] **Backups scheduled** for the PostgreSQL database (the only durable state) — see [backup-and-upgrade.md](/backup-and-upgrade/).
+- [ ] **Backups scheduled** for the PostgreSQL database or SQLite file (whichever holds durable state) — see [backup-and-upgrade.md](/backup-and-upgrade/).

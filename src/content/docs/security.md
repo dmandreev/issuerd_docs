@@ -145,15 +145,18 @@ their peers immediately.
 ### Encryption at rest
 
 By default the `signing_keys` table holds private key material in **plaintext** — anyone who can
-read a database dump can mint tokens for every realm. The optional
+read a database dump can mint tokens for every realm. On PostgreSQL, the optional
 [`[crypto.key_encryption]`](/configuration/#cryptokey_encryption) section enables **envelope
 encryption**: the server encrypts each signing key with a config/env-provided 32-byte Key
 Encryption Key (AES-256-GCM, random per-key nonce) before writing, so the table only ever holds
-ciphertext and the KEK never touches the database.
+ciphertext and the KEK never touches the database. This feature is PostgreSQL-only: SQLite and JSON
+keep plaintext keys, and configuring the section there logs a warning and ignores it. On Unix the
+SQLite database and its `-wal`/`-shm` files are created and maintained with owner-only `0600`
+permissions; apply equivalent protection to every backup.
 
 - **Enablement is transparent**: a boot-time sweep re-encrypts legacy plaintext rows, reads
-  decrypt on the fly, and key rotation writes ciphertext from the start. Existing deployments
-  without the section boot unchanged (with a startup WARN recommending the feature).
+  decrypt on the fly, and key rotation writes ciphertext from the start. Existing PostgreSQL
+  deployments without the section boot unchanged (with a startup WARN recommending the feature).
 - **Fail closed**: a node booted with the wrong KEK refuses to start; there is no plaintext
   fallback. Every cluster node must carry the identical section.
 - **Operational consequences move to the KEK**: back it up alongside the config (a dump without
@@ -289,10 +292,24 @@ current password or any of the `N - 1` most recent previous ones. Superseded pas
 
 ### Imported password hashes
 
-Verification accepts Argon2id PHC strings only; any other stored format simply fails verification
-(`crates/issuerd-auth-flow/src/built_in.rs` — foreign formats return "no match"). When migrating users
-from another system, either import Argon2id-compatible hashes or force a password reset on first
-login (assign the `UPDATE_PASSWORD` required action).
+The shared verifier in `crates/issuerd-auth-flow/src/password_hash.rs` accepts Argon2id,
+PBKDF2-HMAC-SHA256, and PBKDF2-HMAC-SHA512. It handles direct PHC strings and Keycloak
+`credentialData`/`secretData` pairs (camelCase or snake_case, objects or JSON-encoded objects), including
+Argon2 `algorithmData` and `additionalParameters`. Every row keeps its own algorithm and work parameters;
+realm defaults are never substituted for them. Legacy PBKDF2 with SHA-1, malformed JSON/base64, unknown
+Argon2 variants, and invalid lengths fail closed.
+
+Validation happens before hashing and before any import write. Limits are 2,000,000 PBKDF2 iterations,
+10 Argon2 iterations, 65,536 KiB Argon2 memory, and 4 Argon2 lanes. Salt and hash sizes, credential JSON
+(16 KiB), and PHC input (4 KiB) are bounded. PBKDF2 uses `ring` and constant-time verification.
+
+`partialImport` normalizes the stored `secret_data` to a PHC string. Public `credential_data` contains
+only non-secret algorithm/parameter metadata, never the salt or derived hash. Plaintext migration
+passwords are rejected, all credentials are prevalidated before any resource write, and `OVERWRITE`
+replaces only password/password-history entries while preserving other credential types. Imported hashes
+are not rehashed on import or successful login; an ordinary password change writes Argon2id only for the
+changed user. Password-history checks use the same verifier, and `password-history` is never accepted
+as a live login credential.
 
 ## Brute-force protection
 
@@ -615,7 +632,7 @@ per-realm secret generated automatically into the realm attributes at realm crea
 Admin tokens are bound to the realm that issued them (Keycloak model): tokens issued by `master`
 administer every realm, other tokens only their own; realm creation/listing is master-only
 (`crates/issuerd-admin-api/src/auth.rs`). The automatic bootstrap of the master realm with the
-`admin` user runs **only** for the in-memory/json-file backends; its password is
+`admin` user runs **only** for the in-memory/JSON-file/SQLite backends; its password is
 `bootstrap_admin_password` (`ISSUERD_BOOTSTRAP_ADMIN_PASSWORD`) or, when unset, a random one
 printed once to stderr. On PostgreSQL the provision file defines the master realm (see
 `examples/provision.demo.yaml`).

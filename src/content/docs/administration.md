@@ -43,7 +43,7 @@ Reads accept the `view-*` variant *or* the matching `manage-*` variant; writes r
 
 > **Note:** Keycloak models these as client roles on a per-realm `realm-management` client. Issuerd has no `realm-management` client — the seven roles are plain realm roles, and the built-in public client used for admin logins is `admin-cli` (auto-created in every realm). Do not create a client named `realm-management` expecting Keycloak semantics.
 
-The roles are seeded automatically **only in the `master` realm**, and only when the master-realm bootstrap runs (in-memory/JSON-file storage) or when your provision file defines them — see `examples/provision.demo.yaml` for the canonical list. A realm created later through the Admin API or the console does **not** contain them automatically.
+The roles are seeded automatically **only in the `master` realm**, and only when the master-realm bootstrap runs (in-memory/JSON-file/SQLite storage) or when your provision file defines them — see `examples/provision.demo.yaml` for the canonical list. A realm created later through the Admin API or the console does **not** contain them automatically.
 
 ### Realm revocation cutoff (`notBefore`)
 
@@ -114,7 +114,7 @@ The endpoint verifies the password against the realm's `admin-cli` client, creat
 - Lifetime is the issuing realm's `access_token_lifespan` — **300 seconds by default** (`expires_in` in the response tells you the effective value). Scripted workflows should re-fetch the token per run rather than cache it; interactive API users can raise the lifetime on the realm (Tokens tab, or `access_token_lifespan` in the realm representation — that representation mixes snake_case defaults with selective camelCase renames, and this field keeps the snake_case name).
 - Admin sessions are real user sessions: they appear under Sessions and are revoked when the session is deleted, when the user logs out, or when `notBefore` is set.
 
-> **Warning:** The demo credentials (`admin`/`admin` on the root `issuerd.toml` dev rig and the Docker demo stack) are well-known. Without `bootstrap_admin_password` the in-memory/json bootstrap generates a random admin password and prints it once to stderr. Change the master admin password before the server is reachable by anyone else — see [getting started](/getting-started/#first-hardening-steps) and [security](/security/).
+> **Warning:** The demo credentials (`admin`/`admin` on the root `issuerd.toml` dev rig and the Docker demo stack) are well-known. Without `bootstrap_admin_password` the in-memory/JSON/SQLite bootstrap generates a random admin password and prints it once to stderr. Change the master admin password before the server is reachable by anyone else — see [getting started](/getting-started/#first-hardening-steps) and [security](/security/).
 
 ## The admin console
 
@@ -466,7 +466,7 @@ curl -s -X POST "$IC/admin/realms/acme/partialImport?ifResourceExists=SKIP" \
 # → {"added": 3, "skipped": 0, "updated": 0, "results": [...]}
 ```
 
-Strategy: `FAIL` (default — first conflict aborts with **409** and previously imported resources are **not** rolled back), `SKIP`, or `OVERWRITE`. The body accepts `users`, `groups` (top-level only), `clients`, `roles`, `identityProviders`. Import creates users **without credentials** — set passwords afterwards via `reset-password`.
+Strategy: `FAIL` (default — first conflict aborts with **409** and previously imported resources are **not** rolled back), `SKIP`, or `OVERWRITE`. The body accepts `users`, `groups` (top-level only), `clients`, `roles`, `identityProviders`. An ordinary partial document creates users **without credentials** — set passwords afterwards via `reset-password`. A full Keycloak realm export can additionally preserve supported password credentials, client scopes and protocol mappers, default/optional scope assignments, and role/group/composite mappings; see [Keycloak realm migration](/deployment/#keycloak-realm-migration).
 
 ```bash
 curl -s -X POST "$IC/admin/realms/acme/export" -H "Authorization: Bearer $TOKEN" > acme-export.json
