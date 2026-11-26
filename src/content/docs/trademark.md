@@ -101,4 +101,13 @@ may be addressed through platform complaints, domain dispute procedures
 law as available in the relevant jurisdiction. Nothing in this policy
 grants any license to the Marks beyond what is stated here.
 
+## 8. Third-party marks
+
+"Keycloak" is a trademark or registered trademark of Red Hat, Inc. in
+the United States and other countries. The Project uses the mark solely
+in the nominative sense — to describe compatibility ("Keycloak-compatible")
+and to compare functionality — and implies no affiliation with, endorsement
+by, or sponsorship from Red Hat, Inc. No Keycloak branding assets are
+used by the Project.
+
 Questions: trademark@issuerd.org
