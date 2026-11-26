@@ -701,10 +701,20 @@ built-in default theme at `themes/issuerd`.
   directory; assets are served at `/realms/{realm}/theme/{path}`.
 - Fallback is per file: anything a custom theme does not provide is served
   from the built-in `issuerd` theme, so a custom theme only ships the files
-  it overrides (e.g. just `login.css`). The default theme's `login.css` is
+  it overrides (e.g. just `login.css`). The default theme's `login.css` and
+  tab icons (`favicon.svg` for light, `favicon-dark.svg` for dark mode) are
   also compiled into the binary, so deployments without a mounted themes
-  directory (the container image, `cargo install`) still serve it; a
-  `{themes.dir}/issuerd/login.css` on disk takes precedence when present.
+  directory (the container image, `cargo install`) still serve them; a
+  `{themes.dir}/issuerd/` file on disk takes precedence when present.
+- **Tab branding.** The login page and every server-rendered login-flow page
+  (consent, OTP/email-code/WebAuthn challenges, required actions,
+  registration, reset-credentials) take their tab icon from the theme route:
+  a custom theme drops `favicon.svg` (and optionally `favicon-dark.svg`)
+  into its directory and every realm using it shows that icon in the tab bar
+  and history. The login page's tab title is the realm display name next to
+  the localized "Sign In" (`Sign In · Amana`); a bundle key
+  `login.pageTitle` overrides it entirely — `{0}` expands to the display
+  name, and a template without the placeholder is used verbatim.
 - A theme may also carry `messages_{locale}.json` bundles that merge over the
   built-in login/email translations — see the next section.
 

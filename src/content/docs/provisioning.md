@@ -311,10 +311,16 @@ groups:
 | `optional_scopes` | list\<string\> | `[]` | Scopes the client may request optionally. |
 | `consent_required` | bool | `false` | Require a user consent screen. |
 | `full_scope_allowed` | bool | `true` | When `true`, tokens contain the user's full role set; when `false`, only scope mappings apply. |
+| `service_accounts_enabled` | bool | `false` | Back `client_credentials` with a service-account user whose role mappings flow into tokens. The user is created on first use. |
+| `service_account_realm_roles` | list\<string\> | `[]` | Realm role names assigned to the client's service account. The service-account user is created eagerly (not on first use) and `service_accounts_enabled` is implied. Unknown roles are skipped with a warning. Applied only when the client is first created. |
+| `service_account_client_roles` | map\<string, list\<string\>\> | `{}` | Client role names assigned to the client's service account, keyed by `client_id`. Same semantics as `service_account_realm_roles`; unknown clients or roles are skipped with a warning. |
+| `attributes` | map\<string, string\> | `{}` | Free-form client attributes stored verbatim. List-valued attributes such as `post_logout_redirect_uris` and `request_uris` are JSON-encoded strings. Values support `${ENV}` substitution. |
 
-The protocol is always `openid-connect`. Not settable here: service accounts,
-protocol mappers, client roles, client-scope assignments beyond the two scope
-lists — use the Admin API.
+The protocol is always `openid-connect`. Not settable here: protocol mappers,
+client role definitions, client-scope assignments beyond the two scope lists —
+use the Admin API. (`service_account_client_roles` only *assigns* client roles
+that already exist on the target client — itself provisioned earlier in the
+file, pre-existing, or created out of band.)
 
 ```yaml
 clients:
@@ -331,7 +337,29 @@ clients:
     optional_scopes: [email]
     consent_required: false
     full_scope_allowed: true
+    service_accounts_enabled: true
+    attributes:
+      logo_uri: https://app.example.com/logo.svg
+      policy_uri: https://app.example.com/policy
+      tos_uri: https://app.example.com/terms
+      post_logout_redirect_uris: '["https://app.example.com/logged-out"]'
+      token.exchange.enabled: "true"
+
+  # A daemon client: the service account is created eagerly with the listed
+  # roles, so no bootstrap-admin step is needed before it can call the Admin API.
+  - realm: master
+    client_id: directory-sync
+    public_client: false
+    secret: ${SYNC_SECRET}
+    service_account_realm_roles: [view-users, view-realm, view-clients, manage-clients]
+    service_account_client_roles:
+      some-client: [some-role]
 ```
+
+Attribute keys and values are operator-controlled and stored verbatim; validation
+specific to open dynamic client registration does not apply here. Like every other
+client field, attributes are applied only when the client is first created. Changing
+the map later does not update an existing client, even under a new provision marker.
 
 > **Note:** A confidential client provisioned without `secret` ends up with a random
 > secret that appears nowhere in your configuration — retrieve or rotate it via the

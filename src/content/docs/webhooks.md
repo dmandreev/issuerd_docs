@@ -75,8 +75,11 @@ webhooks:
 | Filter | Matches |
 |---|---|
 | `*` | Every user and admin event |
-| `USER.*` | Every user event |
+| `USER.*` | Every user authentication event |
 | `ADMIN.*` | Every admin event |
+| `ADMIN.GROUP.*` | Every admin operation on groups |
+| `GROUP.*` | Shorthand for `ADMIN.GROUP.*` (available for non-`USER` resources) |
+| `GROUP.CREATE` | Shorthand for `ADMIN.GROUP.CREATE` |
 | `USER.LOGIN` | Successful interactive login |
 | `USER.LOGIN_ERROR` | Failed login, including authorization/JAR/PAR failures |
 | `USER.REGISTER` | Self-registration |
@@ -84,7 +87,7 @@ webhooks:
 | `ADMIN.USER.CREATE` | Administrator-created user |
 | `ADMIN.CLIENT.UPDATE` | Client update |
 
-Admin filters use `ADMIN.<RESOURCE_TYPE>.<OPERATION_TYPE>`. The operation is `CREATE`, `UPDATE`, `DELETE`, or `ACTION`. Self-registration and administrator-created users deliberately remain different event families; no duplicate `USER_CREATED` event is invented.
+Admin filters use `ADMIN.<RESOURCE_TYPE>.<OPERATION_TYPE>` or the shorthand `<RESOURCE_TYPE>.<OPERATION_TYPE>`. The operation is `CREATE`, `UPDATE`, `DELETE`, or `ACTION`. Resource wildcards use `ADMIN.<RESOURCE_TYPE>.*`; for non-`USER` resources, `<RESOURCE_TYPE>.*` is equivalent. `USER.*` retains its user-authentication meaning, so use `ADMIN.USER.*` for every admin operation on users. Resource types are listed by `GET /admin/enums/resource-types`. Self-registration and administrator-created users deliberately remain different event families; no duplicate `USER_CREATED` event is invented.
 
 ## Payloads
 
